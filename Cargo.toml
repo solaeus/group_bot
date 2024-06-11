@@ -1,0 +1,12 @@
+[package]
+name = "group-bot"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = "1.38.0"
+veloren-common = { git = "https://gitlab.com/veloren/veloren", branch = "master", features = ["no-assets"] }
+veloren-client = { git = "https://gitlab.com/veloren/veloren", branch = "master" }
+
+[patch.crates-io]
+specs = { git = "https://github.com/amethyst/specs.git", rev = "4e2da1df29ee840baa9b936593c45592b7c9ae27" }
