@@ -5,6 +5,7 @@ use veloren_client::{addr::ConnectionArgs, Client, Event};
 use veloren_common::{
     clock::Clock,
     comp::{invite::InviteKind, ChatType, ControllerInputs},
+    uid::Uid,
     ViewDistances,
 };
 
@@ -18,33 +19,7 @@ fn main() {
     let mut client = connect_to_veloren(password);
     let mut clock = Clock::new(Duration::from_secs_f64(1.0));
 
-    client.load_character_list();
-
-    while client.character_list().loading {
-        println!("Loading characters...");
-
-        client
-            .tick(ControllerInputs::default(), clock.dt())
-            .expect("Failed to run client.");
-        clock.tick();
-    }
-
-    let character_id = client
-        .character_list()
-        .characters
-        .first()
-        .unwrap()
-        .character
-        .id
-        .unwrap();
-
-    client.request_character(
-        character_id,
-        ViewDistances {
-            terrain: 0,
-            entity: 0,
-        },
-    );
+    select_character(&mut client, &mut clock);
 
     loop {
         let events = client
@@ -52,30 +27,17 @@ fn main() {
             .expect("Failed to run client.");
 
         for event in events {
-            match event {
-                Event::Chat(message) => match message.chat_type {
-                    ChatType::Tell(from, _) | ChatType::Group(from, _) => {
-                        if let Some(content) = message.content().as_plain() {
-                            let mut words = content.split_whitespace();
-
-                            if let Some(command) = words.next() {
-                                match command {
-                                    "inv" => invite_players(&mut client, words),
-                                    "kick" => {
-                                        let sender_info = client.player_list().get(&from).unwrap();
-
-                                        if sender_info.uuid.to_string() == CRABO_UUID {
-                                            kick_players(&mut client, words)
-                                        }
-                                    }
-                                    _ => continue,
-                                }
-                            }
-                        }
+            if let Event::Chat(message) = event {
+                match message.chat_type {
+                    ChatType::Tell(sender, _) | ChatType::Group(sender, _) => {
+                        handle_message(
+                            &mut client,
+                            message.into_content().as_plain().unwrap_or(""),
+                            sender,
+                        );
                     }
                     _ => {}
-                },
-                _ => {}
+                }
             }
         }
 
@@ -105,6 +67,54 @@ fn connect_to_veloren(password: String) -> Client {
             Default::default(),
         ))
         .expect("Failed to create client instance.")
+}
+
+fn select_character(client: &mut Client, clock: &mut Clock) {
+    client.load_character_list();
+
+    while client.character_list().loading {
+        println!("Loading characters...");
+
+        client
+            .tick(ControllerInputs::default(), clock.dt())
+            .expect("Failed to run client.");
+        clock.tick();
+    }
+
+    let character_id = client
+        .character_list()
+        .characters
+        .first()
+        .unwrap()
+        .character
+        .id
+        .unwrap();
+
+    client.request_character(
+        character_id,
+        ViewDistances {
+            terrain: 0,
+            entity: 0,
+        },
+    );
+}
+
+fn handle_message(mut client: &mut Client, content: &str, sender: Uid) {
+    let mut words = content.split_whitespace();
+
+    if let Some(command) = words.next() {
+        match command {
+            "inv" => invite_players(&mut client, words),
+            "kick" => {
+                let sender_info = client.player_list().get(&sender).unwrap();
+
+                if sender_info.uuid.to_string() == CRABO_UUID {
+                    kick_players(&mut client, words)
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 fn invite_players<'a, T: Iterator<Item = &'a str>>(client: &mut Client, names: T) {
