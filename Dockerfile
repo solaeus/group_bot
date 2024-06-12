@@ -15,9 +15,9 @@ FROM fedora:40
 
 WORKDIR /app
 
-COPY --from=build /app/target/release/hotbot hotbot
+COPY --from=build /app/target/release/group-bot group-bot
 COPY assets/ assets/
 
-RUN chmod +x hotbot
+RUN chmod +x group-bot
 
-CMD ["./hotbot"]
+CMD ["./group-bot"]
