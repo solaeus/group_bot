@@ -53,56 +53,28 @@ fn main() {
 
         for event in events {
             match event {
-                Event::Chat(message) => {
-                    if let ChatType::Tell(from, _) = message.chat_type {
+                Event::Chat(message) => match message.chat_type {
+                    ChatType::Tell(from, _) | ChatType::Group(from, _) => {
                         if let Some(content) = message.content().as_plain() {
-                            println!("{from}: {content}");
+                            let mut words = content.split_whitespace();
 
-                            if content == "inv" {
-                                client.send_invite(from, InviteKind::Group);
-                            } else if content.starts_with("inv") {
-                                let player_names =
-                                    content.trim_start_matches("inv").split_whitespace();
+                            if let Some(command) = words.next() {
+                                match command {
+                                    "inv" => invite_players(&mut client, words),
+                                    "kick" => {
+                                        let sender_info = client.player_list().get(&from).unwrap();
 
-                                for name in player_names {
-                                    if let Some(player_id) =
-                                        client.player_list().iter().find_map(|(id, info)| {
-                                            if info.player_alias == name {
-                                                Some(id)
-                                            } else {
-                                                None
-                                            }
-                                        })
-                                    {
-                                        client.send_invite(player_id.clone(), InviteKind::Group);
-                                    }
-                                }
-                            }
-
-                            if content.starts_with("kick") {
-                                let player_names =
-                                    content.trim_start_matches("kick").split_whitespace();
-                                let sender_info = client.player_list().get(&from).unwrap();
-
-                                if sender_info.uuid.to_string() == CRABO_UUID {
-                                    for name in player_names {
-                                        if let Some(player_id) =
-                                            client.player_list().iter().find_map(|(id, info)| {
-                                                if info.player_alias == name {
-                                                    Some(id)
-                                                } else {
-                                                    None
-                                                }
-                                            })
-                                        {
-                                            client.kick_from_group(player_id.clone());
+                                        if sender_info.uuid.to_string() == CRABO_UUID {
+                                            kick_players(&mut client, words)
                                         }
                                     }
+                                    _ => continue,
                                 }
                             }
                         }
                     }
-                }
+                    _ => {}
+                },
                 _ => {}
             }
         }
@@ -133,4 +105,36 @@ fn connect_to_veloren(password: String) -> Client {
             Default::default(),
         ))
         .expect("Failed to create client instance.")
+}
+
+fn invite_players<'a, T: Iterator<Item = &'a str>>(client: &mut Client, names: T) {
+    for name in names {
+        let find_id = client.player_list().iter().find_map(|(id, info)| {
+            if info.player_alias == name {
+                Some(id)
+            } else {
+                None
+            }
+        });
+
+        if let Some(player_id) = find_id {
+            client.send_invite(player_id.clone(), InviteKind::Group);
+        }
+    }
+}
+
+fn kick_players<'a, T: Iterator<Item = &'a str>>(client: &mut Client, names: T) {
+    for name in names {
+        let find_id = client.player_list().iter().find_map(|(id, info)| {
+            if info.player_alias == name {
+                Some(id)
+            } else {
+                None
+            }
+        });
+
+        if let Some(player_id) = find_id {
+            client.kick_from_group(player_id.clone());
+        }
+    }
 }
