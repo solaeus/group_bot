@@ -123,6 +123,10 @@ impl Bot {
                         self.ban_players(names)?;
                     }
                 }
+                "cheese" => {
+                    self.client.chat_mode = ChatMode::Group;
+                    self.client.send_chat("I love cheese!".to_string());
+                }
                 "inv" => {
                     if !self.ban_list.contains(sender) {
                         self.invite_players(names)
@@ -132,10 +136,6 @@ impl Bot {
                     if self.admin_list.contains(sender) {
                         self.kick_players(names)
                     }
-                }
-                "cheese" => {
-                    self.client.chat_mode = ChatMode::Group;
-                    self.client.send_chat("I love cheese!".to_string());
                 }
                 _ => {}
             }
