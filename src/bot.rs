@@ -133,7 +133,7 @@ impl Bot {
             }
         }
 
-        let old_config = Config::read();
+        let old_config = Config::read()?;
         let new_config = Config {
             username: old_config.username,
             password: old_config.password,

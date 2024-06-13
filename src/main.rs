@@ -16,23 +16,23 @@ struct Config {
 }
 
 impl Config {
-    fn read() -> Self {
-        let config_path = var("CONFIG_PATH").expect("Provide CONFIG_PATH environment variable");
-        let config_file_content = read_to_string(config_path).expect("Failed to read config file");
+    fn read() -> Result<Self, String> {
+        let config_path = var("CONFIG_PATH").map_err(|error| error.to_string())?;
+        let config_file_content = read_to_string(config_path).map_err(|error| error.to_string())?;
 
-        toml::from_str::<Config>(&config_file_content).expect("Failed to deserialize config file.")
+        toml::from_str::<Config>(&config_file_content).map_err(|error| error.to_string())
     }
 
     fn write(&self) -> Result<(), String> {
-        let config_path = var("CONFIG_PATH").expect("Provide CONFIG_PATH environment variable");
-        let config_string = toml::to_string(self).expect("Failed to serialize Config");
+        let config_path = var("CONFIG_PATH").map_err(|error| error.to_string())?;
+        let config_string = toml::to_string(self).map_err(|error| error.to_string())?;
 
         write(config_path, config_string).map_err(|error| error.to_string())
     }
 }
 
 fn main() {
-    let config = Config::read();
+    let config = Config::read().unwrap();
     let mut bot = Bot::new(&config.username, &config.password, config.admin_list)
         .expect("Failed to create bot");
 
