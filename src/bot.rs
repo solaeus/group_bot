@@ -116,6 +116,9 @@ impl Bot {
                         self.kick_players(words)
                     }
                 }
+                "cheese" => {
+                    self.client.send_chat("/g I love cheese!".to_string());
+                }
                 _ => {}
             }
         }
