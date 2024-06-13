@@ -54,7 +54,7 @@ impl Bot {
             .expect("No characters to select")
             .character
             .id
-            .unwrap();
+            .expect("Failed to get character ID");
 
         self.client.request_character(
             character_id,
@@ -71,7 +71,7 @@ impl Bot {
         let events = self
             .client
             .tick(ControllerInputs::default(), self.clock.dt())
-            .expect("Failed to run client.");
+            .map_err(|error| format!("{error:?}"))?;
 
         for event in events {
             self.handle_event(event)?;
