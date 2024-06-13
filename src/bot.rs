@@ -1,0 +1,207 @@
+use std::{sync::Arc, time::Duration};
+
+use tokio::runtime::Runtime;
+use veloren_client::{addr::ConnectionArgs, Client, Event};
+use veloren_common::{
+    clock::Clock,
+    comp::{invite::InviteKind, ChatType, ControllerInputs},
+    uid::Uid,
+    ViewDistances,
+};
+
+use crate::Config;
+
+pub struct Bot {
+    client: Client,
+    clock: Clock,
+    admin_list: Vec<String>,
+}
+
+impl Bot {
+    pub fn new(username: &str, password: &str, admin_list: Vec<String>) -> Result<Self, String> {
+        let client = connect_to_veloren(username, password)?;
+        let clock = Clock::new(Duration::from_secs_f64(1.0));
+
+        Ok(Bot {
+            client,
+            clock,
+            admin_list,
+        })
+    }
+
+    pub fn select_character(&mut self) -> Result<(), String> {
+        self.client.load_character_list();
+
+        while self.client.character_list().loading {
+            self.client
+                .tick(ControllerInputs::default(), self.clock.dt())
+                .map_err(|error| format!("{error:?}"))?;
+            self.clock.tick();
+        }
+
+        let character_id = self
+            .client
+            .character_list()
+            .characters
+            .first()
+            .expect("No characters to select")
+            .character
+            .id
+            .unwrap();
+
+        self.client.request_character(
+            character_id,
+            ViewDistances {
+                terrain: 0,
+                entity: 0,
+            },
+        );
+
+        Ok(())
+    }
+
+    pub fn tick(&mut self) -> Result<(), String> {
+        let events = self
+            .client
+            .tick(ControllerInputs::default(), self.clock.dt())
+            .expect("Failed to run client.");
+
+        for event in events {
+            self.handle_event(event)?;
+        }
+
+        self.client.cleanup();
+        self.clock.tick();
+
+        Ok(())
+    }
+
+    fn handle_event(&mut self, event: Event) -> Result<(), String> {
+        if let Event::Chat(message) = event {
+            match message.chat_type {
+                ChatType::Tell(sender, _) | ChatType::Group(sender, _) => {
+                    let sender_uuid = self
+                        .client
+                        .player_list()
+                        .get(&sender)
+                        .unwrap()
+                        .uuid
+                        .to_string();
+
+                    self.handle_message(
+                        message.into_content().as_plain().unwrap_or(""),
+                        &sender_uuid,
+                    )?;
+                }
+                _ => {}
+            }
+        }
+
+        Ok(())
+    }
+
+    fn handle_message(&mut self, content: &str, sender: &String) -> Result<(), String> {
+        let mut words = content.split_whitespace();
+
+        if let Some(command) = words.next() {
+            match command {
+                "admin" => {
+                    if self.admin_list.contains(sender) {
+                        self.adminify_players(words)?;
+                    }
+                }
+                "inv" => self.invite_players(words),
+                "kick" => {
+                    if self.admin_list.contains(sender) {
+                        self.kick_players(words)
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        Ok(())
+    }
+
+    fn adminify_players<'a, T: Iterator<Item = &'a str>>(
+        &mut self,
+        names: T,
+    ) -> Result<(), String> {
+        for name in names {
+            if let Some(player_id) = self.find_uuid(&name) {
+                self.admin_list.push(player_id);
+            }
+        }
+
+        let old_config = Config::read();
+        let new_config = Config {
+            username: old_config.username,
+            password: old_config.password,
+            admin_list: self.admin_list.clone(),
+        };
+
+        new_config.write()?;
+
+        Ok(())
+    }
+
+    fn invite_players<'a, T: Iterator<Item = &'a str>>(&mut self, names: T) {
+        for name in names {
+            if let Some(player_id) = self.find_uid(&name) {
+                self.client
+                    .send_invite(player_id.clone(), InviteKind::Group);
+            }
+        }
+    }
+
+    fn kick_players<'a, T: Iterator<Item = &'a str>>(&mut self, names: T) {
+        for name in names {
+            if let Some(player_id) = self.find_uid(&name) {
+                self.client.kick_from_group(player_id.clone());
+            }
+        }
+    }
+
+    fn find_uid<'a>(&'a self, name: &str) -> Option<&'a Uid> {
+        self.client.player_list().iter().find_map(|(id, info)| {
+            if info.player_alias == name {
+                Some(id)
+            } else {
+                None
+            }
+        })
+    }
+
+    fn find_uuid(&self, name: &str) -> Option<String> {
+        self.client.player_list().iter().find_map(|(_, info)| {
+            if info.player_alias == name {
+                Some(info.uuid.to_string())
+            } else {
+                None
+            }
+        })
+    }
+}
+
+fn connect_to_veloren(username: &str, password: &str) -> Result<Client, String> {
+    let runtime = Arc::new(Runtime::new().unwrap());
+    let runtime2 = Arc::clone(&runtime);
+
+    runtime
+        .block_on(Client::new(
+            ConnectionArgs::Tcp {
+                hostname: "server.veloren.net".to_string(),
+                prefer_ipv6: false,
+            },
+            runtime2,
+            &mut None,
+            username,
+            password,
+            None,
+            |provider| provider == "https://auth.veloren.net",
+            &|_| {},
+            |_| {},
+            Default::default(),
+        ))
+        .map_err(|error| format!("{error:?}"))
+}

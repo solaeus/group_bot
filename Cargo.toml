@@ -7,6 +7,8 @@ edition = "2021"
 tokio = "1.38.0"
 veloren-common = { git = "https://gitlab.com/veloren/veloren", branch = "master", features = ["no-assets"] }
 veloren-client = { git = "https://gitlab.com/veloren/veloren", branch = "master" }
+toml = "0.8.14"
+serde = { version = "1.0.203", features = ["derive"] }
 
 [patch.crates-io]
 specs = { git = "https://github.com/amethyst/specs.git", rev = "4e2da1df29ee840baa9b936593c45592b7c9ae27" }
