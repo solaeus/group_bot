@@ -123,18 +123,22 @@ impl Bot {
                         self.ban_players(names)?;
                     }
                 }
-                "cheese" => {
-                    self.client.chat_mode = ChatMode::Group;
-                    self.client.send_chat("I love cheese!".to_string());
-                }
+                "cheese" => self
+                    .client
+                    .send_command("group".to_string(), vec!["I love cheese!".to_string()]),
                 "inv" => {
                     if !self.ban_list.contains(sender) {
-                        self.invite_players(names)
+                        self.invite_players(names);
                     }
                 }
                 "kick" => {
                     if self.admin_list.contains(sender) {
-                        self.kick_players(names)
+                        self.kick_players(names);
+                    }
+                }
+                "unban" => {
+                    if self.admin_list.contains(sender) {
+                        self.unban_players(names)?;
                     }
                 }
                 _ => {}
@@ -149,9 +153,9 @@ impl Bot {
         names: T,
     ) -> Result<(), String> {
         for name in names {
-            if let Some(player_id) = self.find_uuid(&name) {
-                if !self.admin_list.contains(&player_id) {
-                    self.admin_list.push(player_id);
+            if let Some(uuid) = self.find_uuid(&name) {
+                if !self.admin_list.contains(&uuid) && !self.ban_list.contains(&uuid) {
+                    self.admin_list.push(uuid);
                 }
             }
         }
@@ -171,9 +175,9 @@ impl Bot {
 
     fn ban_players<'a, T: Iterator<Item = &'a str>>(&mut self, names: T) -> Result<(), String> {
         for name in names {
-            if let Some(player_id) = self.find_uuid(&name) {
-                if !self.ban_list.contains(&player_id) {
-                    self.ban_list.push(player_id);
+            if let Some(uuid) = self.find_uuid(&name) {
+                if !self.admin_list.contains(&uuid) && !self.ban_list.contains(&uuid) {
+                    self.ban_list.push(uuid);
                 }
             }
         }
@@ -202,10 +206,43 @@ impl Bot {
 
     fn kick_players<'a, T: Iterator<Item = &'a str>>(&mut self, names: T) {
         for name in names {
-            if let Some(player_id) = self.find_uid(&name) {
-                self.client.kick_from_group(player_id.clone());
+            if let Some(uid) = self.find_uid(&name) {
+                if let Some(uuid) = self.find_uuid(&name) {
+                    if !self.admin_list.contains(&uuid) {
+                        self.client.kick_from_group(uid.clone());
+                    }
+                }
             }
         }
+    }
+
+    fn unban_players<'a, T: Iterator<Item = &'a str>>(&mut self, names: T) -> Result<(), String> {
+        let uuids = names
+            .filter_map(|name| self.find_uuid(name))
+            .collect::<Vec<String>>();
+
+        for uuid in uuids {
+            if let Some(index) = self
+                .ban_list
+                .iter()
+                .enumerate()
+                .find_map(|(index, banned)| if &uuid == banned { Some(index) } else { None })
+            {
+                self.ban_list.remove(index);
+            }
+        }
+
+        let old_config = Config::read()?;
+        let new_config = Config {
+            username: old_config.username,
+            password: old_config.password,
+            admin_list: old_config.admin_list,
+            ban_list: self.ban_list.clone(),
+        };
+
+        new_config.write()?;
+
+        Ok(())
     }
 
     fn find_uid<'a>(&'a self, name: &str) -> Option<&'a Uid> {
