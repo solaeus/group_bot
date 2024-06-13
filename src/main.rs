@@ -1,11 +1,16 @@
-use std::{env::var, fs::read_to_string, sync::Arc, time::Duration};
+use std::{
+    env::var,
+    fs::{read_to_string, write},
+    sync::Arc,
+    time::Duration,
+};
 
 use tokio::runtime::Runtime;
 use veloren_client::{addr::ConnectionArgs, Client, Event};
 use veloren_common::{
     clock::Clock,
     comp::{invite::InviteKind, ChatType, ControllerInputs},
-    uid::Uid,
+    uuid::Uuid,
     ViewDistances,
 };
 
@@ -15,6 +20,11 @@ fn main() {
     let password_file = var("PASSWORD_FILE").expect("Provide PASSWORD_FILE environment variable.");
     let password = read_to_string(&password_file)
         .expect(&format!("Failed to read password from {password_file}"));
+
+    let mut admin_list = vec![Uuid::parse_str(CRABO_UUID).unwrap()];
+
+    write("admin_list.txt", format!("{admin_list:?}"))
+        .expect("Failed to write initial admin list.");
 
     let mut client = connect_to_veloren(password);
     let mut clock = Clock::new(Duration::from_secs_f64(1.0));
@@ -30,10 +40,13 @@ fn main() {
             if let Event::Chat(message) = event {
                 match message.chat_type {
                     ChatType::Tell(sender, _) | ChatType::Group(sender, _) => {
+                        let sender_uuid = client.player_list().get(&sender).unwrap().uuid;
+
                         handle_message(
                             &mut client,
+                            &mut admin_list,
                             message.into_content().as_plain().unwrap_or(""),
-                            sender,
+                            sender_uuid,
                         );
                     }
                     _ => {}
@@ -99,20 +112,48 @@ fn select_character(client: &mut Client, clock: &mut Clock) {
     );
 }
 
-fn handle_message(mut client: &mut Client, content: &str, sender: Uid) {
+fn handle_message(
+    mut client: &mut Client,
+    mut admin_list: &mut Vec<Uuid>,
+    content: &str,
+    sender: Uuid,
+) {
     let mut words = content.split_whitespace();
 
     if let Some(command) = words.next() {
         match command {
+            "admin" => {
+                if admin_list.contains(&sender) {
+                    adminify_players(&mut client, &mut admin_list, words)
+                }
+            }
             "inv" => invite_players(&mut client, words),
             "kick" => {
-                let sender_info = client.player_list().get(&sender).unwrap();
-
-                if sender_info.uuid.to_string() == CRABO_UUID {
+                if admin_list.contains(&sender) {
                     kick_players(&mut client, words)
                 }
             }
             _ => {}
+        }
+    }
+}
+
+fn adminify_players<'a, T: Iterator<Item = &'a str>>(
+    client: &mut Client,
+    admin_list: &mut Vec<Uuid>,
+    names: T,
+) {
+    for name in names {
+        let find_id = client.player_list().iter().find_map(|(_, info)| {
+            if info.player_alias == name {
+                Some(info.uuid)
+            } else {
+                None
+            }
+        });
+
+        if let Some(player_id) = find_id {
+            admin_list.push(player_id);
         }
     }
 }
