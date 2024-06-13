@@ -4,7 +4,7 @@ use tokio::runtime::Runtime;
 use veloren_client::{addr::ConnectionArgs, Client, Event};
 use veloren_common::{
     clock::Clock,
-    comp::{invite::InviteKind, ChatType, ControllerInputs},
+    comp::{invite::InviteKind, ChatMode, ChatType, ControllerInputs},
     uid::Uid,
     ViewDistances,
 };
@@ -15,10 +15,16 @@ pub struct Bot {
     client: Client,
     clock: Clock,
     admin_list: Vec<String>,
+    ban_list: Vec<String>,
 }
 
 impl Bot {
-    pub fn new(username: &str, password: &str, admin_list: Vec<String>) -> Result<Self, String> {
+    pub fn new(
+        username: &str,
+        password: &str,
+        admin_list: Vec<String>,
+        ban_list: Vec<String>,
+    ) -> Result<Self, String> {
         let client = connect_to_veloren(username, password)?;
         let clock = Clock::new(Duration::from_secs_f64(1.0));
 
@@ -26,6 +32,7 @@ impl Bot {
             client,
             clock,
             admin_list,
+            ban_list,
         })
     }
 
@@ -101,23 +108,34 @@ impl Bot {
     }
 
     fn handle_message(&mut self, content: &str, sender: &String) -> Result<(), String> {
-        let mut words = content.split_whitespace();
+        let mut names = content.split_whitespace();
 
-        if let Some(command) = words.next() {
+        if let Some(command) = names.next() {
             match command {
                 "admin" => {
                     if self.admin_list.contains(sender) {
-                        self.adminify_players(words)?;
+                        self.adminify_players(names)?;
                     }
                 }
-                "inv" => self.invite_players(words),
+                "ban" => {
+                    if self.admin_list.contains(sender) {
+                        self.kick_players(names.clone());
+                        self.ban_players(names)?;
+                    }
+                }
+                "inv" => {
+                    if !self.ban_list.contains(sender) {
+                        self.invite_players(names)
+                    }
+                }
                 "kick" => {
                     if self.admin_list.contains(sender) {
-                        self.kick_players(words)
+                        self.kick_players(names)
                     }
                 }
                 "cheese" => {
-                    self.client.send_chat("/g I love cheese!".to_string());
+                    self.client.chat_mode = ChatMode::Group;
+                    self.client.send_chat("I love cheese!".to_string());
                 }
                 _ => {}
             }
@@ -132,7 +150,9 @@ impl Bot {
     ) -> Result<(), String> {
         for name in names {
             if let Some(player_id) = self.find_uuid(&name) {
-                self.admin_list.push(player_id);
+                if !self.admin_list.contains(&player_id) {
+                    self.admin_list.push(player_id);
+                }
             }
         }
 
@@ -141,6 +161,29 @@ impl Bot {
             username: old_config.username,
             password: old_config.password,
             admin_list: self.admin_list.clone(),
+            ban_list: old_config.ban_list,
+        };
+
+        new_config.write()?;
+
+        Ok(())
+    }
+
+    fn ban_players<'a, T: Iterator<Item = &'a str>>(&mut self, names: T) -> Result<(), String> {
+        for name in names {
+            if let Some(player_id) = self.find_uuid(&name) {
+                if !self.ban_list.contains(&player_id) {
+                    self.ban_list.push(player_id);
+                }
+            }
+        }
+
+        let old_config = Config::read()?;
+        let new_config = Config {
+            username: old_config.username,
+            password: old_config.password,
+            admin_list: old_config.admin_list,
+            ban_list: self.ban_list.clone(),
         };
 
         new_config.write()?;

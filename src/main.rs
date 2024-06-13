@@ -13,6 +13,7 @@ struct Config {
     pub username: String,
     pub password: String,
     pub admin_list: Vec<String>,
+    pub ban_list: Vec<String>,
 }
 
 impl Config {
@@ -33,8 +34,13 @@ impl Config {
 
 fn main() {
     let config = Config::read().unwrap();
-    let mut bot = Bot::new(&config.username, &config.password, config.admin_list)
-        .expect("Failed to create bot");
+    let mut bot = Bot::new(
+        &config.username,
+        &config.password,
+        config.admin_list,
+        config.ban_list,
+    )
+    .expect("Failed to create bot");
 
     bot.select_character().expect("Failed to select character");
 
