@@ -4,7 +4,7 @@ use tokio::runtime::Runtime;
 use veloren_client::{addr::ConnectionArgs, Client, Event};
 use veloren_common::{
     clock::Clock,
-    comp::{invite::InviteKind, ChatMode, ChatType, ControllerInputs},
+    comp::{invite::InviteKind, ChatType, ControllerInputs},
     uid::Uid,
     ViewDistances,
 };
@@ -26,7 +26,7 @@ impl Bot {
         ban_list: Vec<String>,
     ) -> Result<Self, String> {
         let client = connect_to_veloren(username, password)?;
-        let clock = Clock::new(Duration::from_secs_f64(1.0));
+        let clock = Clock::new(Duration::from_secs_f64(0.1));
 
         Ok(Bot {
             client,
