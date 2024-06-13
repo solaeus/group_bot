@@ -113,7 +113,7 @@ impl Bot {
         if let Some(command) = names.next() {
             match command {
                 "admin" => {
-                    if self.admin_list.contains(sender) {
+                    if self.admin_list.contains(sender) || self.admin_list.is_empty() {
                         self.adminify_players(names)?;
                     }
                 }
