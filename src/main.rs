@@ -7,13 +7,14 @@ use std::{
 
 use bot::Bot;
 use serde::{Deserialize, Serialize};
+use veloren_common::uuid::Uuid;
 
 #[derive(Serialize, Deserialize)]
 struct Config {
     pub username: String,
     pub password: String,
-    pub admin_list: Vec<String>,
-    pub ban_list: Vec<String>,
+    pub admin_list: Vec<Uuid>,
+    pub ban_list: Vec<Uuid>,
 }
 
 impl Config {

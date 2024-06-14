@@ -732,6 +732,7 @@ dependencies = [
  "toml",
  "veloren-client",
  "veloren-common",
+ "veloren-common-net",
 ]
 
 [[package]]

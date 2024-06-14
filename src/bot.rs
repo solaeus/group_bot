@@ -6,24 +6,26 @@ use veloren_common::{
     clock::Clock,
     comp::{invite::InviteKind, ChatType, ControllerInputs},
     uid::Uid,
+    uuid::Uuid,
     ViewDistances,
 };
+use veloren_common_net::msg::PlayerInfo;
 
 use crate::Config;
 
 pub struct Bot {
     client: Client,
     clock: Clock,
-    admin_list: Vec<String>,
-    ban_list: Vec<String>,
+    admin_list: Vec<Uuid>,
+    ban_list: Vec<Uuid>,
 }
 
 impl Bot {
     pub fn new(
         username: &str,
         password: &str,
-        admin_list: Vec<String>,
-        ban_list: Vec<String>,
+        admin_list: Vec<Uuid>,
+        ban_list: Vec<Uuid>,
     ) -> Result<Self, String> {
         let client = connect_to_veloren(username, password)?;
         let clock = Clock::new(Duration::from_secs_f64(0.1));
@@ -87,17 +89,11 @@ impl Bot {
         if let Event::Chat(message) = event {
             match message.chat_type {
                 ChatType::Tell(sender, _) | ChatType::Group(sender, _) => {
-                    let sender_uuid = self
-                        .client
-                        .player_list()
-                        .get(&sender)
-                        .unwrap()
-                        .uuid
-                        .to_string();
+                    let sender_info = self.client.player_list().get(&sender).unwrap().clone();
 
                     self.handle_message(
                         message.into_content().as_plain().unwrap_or(""),
-                        &sender_uuid,
+                        &sender_info,
                     )?;
                 }
                 _ => {}
@@ -107,38 +103,42 @@ impl Bot {
         Ok(())
     }
 
-    fn handle_message(&mut self, content: &str, sender: &String) -> Result<(), String> {
-        let mut names = content.split_whitespace();
+    fn handle_message(&mut self, content: &str, sender: &PlayerInfo) -> Result<(), String> {
+        let mut words = content.split_whitespace();
 
-        if let Some(command) = names.next() {
+        if let Some(command) = words.next() {
             match command {
                 "admin" => {
-                    if self.admin_list.contains(sender) || self.admin_list.is_empty() {
-                        self.adminify_players(names)?;
+                    if self.admin_list.contains(&sender.uuid) || self.admin_list.is_empty() {
+                        self.adminify_players(words)?;
                     }
                 }
                 "ban" => {
-                    if self.admin_list.contains(sender) {
-                        self.kick_players(names.clone());
-                        self.ban_players(names)?;
+                    if self.admin_list.contains(&sender.uuid) {
+                        self.kick_players(words.clone());
+                        self.ban_players(words)?;
                     }
                 }
                 "cheese" => self
                     .client
                     .send_command("group".to_string(), vec!["I love cheese!".to_string()]),
                 "inv" => {
-                    if !self.ban_list.contains(sender) {
-                        self.invite_players(names);
+                    if !self.ban_list.contains(&sender.uuid) {
+                        if content == "inv" {
+                            self.invite_players([sender.player_alias.as_str()].into_iter());
+                        } else {
+                            self.invite_players(words);
+                        }
                     }
                 }
                 "kick" => {
-                    if self.admin_list.contains(sender) {
-                        self.kick_players(names);
+                    if self.admin_list.contains(&sender.uuid) {
+                        self.kick_players(words);
                     }
                 }
                 "unban" => {
-                    if self.admin_list.contains(sender) {
-                        self.unban_players(names)?;
+                    if self.admin_list.contains(&sender.uuid) {
+                        self.unban_players(words)?;
                     }
                 }
                 _ => {}
@@ -197,9 +197,11 @@ impl Bot {
 
     fn invite_players<'a, T: Iterator<Item = &'a str>>(&mut self, names: T) {
         for name in names {
-            if let Some(player_id) = self.find_uid(&name) {
+            if let Some(player_id) = self.find_uid(name) {
                 self.client
                     .send_invite(player_id.clone(), InviteKind::Group);
+            } else {
+                eprintln!("{name} could not be invited")
             }
         }
     }
@@ -219,7 +221,7 @@ impl Bot {
     fn unban_players<'a, T: Iterator<Item = &'a str>>(&mut self, names: T) -> Result<(), String> {
         let uuids = names
             .filter_map(|name| self.find_uuid(name))
-            .collect::<Vec<String>>();
+            .collect::<Vec<Uuid>>();
 
         for uuid in uuids {
             if let Some(index) = self
@@ -255,10 +257,10 @@ impl Bot {
         })
     }
 
-    fn find_uuid(&self, name: &str) -> Option<String> {
+    fn find_uuid(&self, name: &str) -> Option<Uuid> {
         self.client.player_list().iter().find_map(|(_, info)| {
             if info.player_alias == name {
-                Some(info.uuid.to_string())
+                Some(info.uuid)
             } else {
                 None
             }
