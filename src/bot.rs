@@ -1,7 +1,8 @@
-use std::{sync::Arc, time::Duration};
+use std::{collections::VecDeque, sync::Arc, time::Duration};
 
+use log::{debug, info};
 use tokio::runtime::Runtime;
-use veloren_client::{addr::ConnectionArgs, Client, Event};
+use veloren_client::{addr::ConnectionArgs, Client, Event as VelorenEvent};
 use veloren_common::{
     clock::Clock,
     comp::{invite::InviteKind, ChatType, ControllerInputs},
@@ -13,11 +14,21 @@ use veloren_common_net::msg::PlayerInfo;
 
 use crate::Config;
 
+enum Event {
+    Admin(String),
+    Ban(String),
+    Cheese,
+    Invite(Uid),
+    Kick(Uid),
+    Unban(String),
+}
+
 pub struct Bot {
     client: Client,
     clock: Clock,
     admin_list: Vec<Uuid>,
     ban_list: Vec<Uuid>,
+    events: VecDeque<Event>,
 }
 
 impl Bot {
@@ -27,6 +38,8 @@ impl Bot {
         admin_list: Vec<Uuid>,
         ban_list: Vec<Uuid>,
     ) -> Result<Self, String> {
+        info!("Connecting to veloren");
+
         let client = connect_to_veloren(username, password)?;
         let clock = Clock::new(Duration::from_secs_f64(0.1));
 
@@ -35,10 +48,13 @@ impl Bot {
             clock,
             admin_list,
             ban_list,
+            events: VecDeque::new(),
         })
     }
 
     pub fn select_character(&mut self) -> Result<(), String> {
+        info!("Selecting a character");
+
         self.client.load_character_list();
 
         while self.client.character_list().loading {
@@ -70,13 +86,23 @@ impl Bot {
     }
 
     pub fn tick(&mut self) -> Result<(), String> {
-        let events = self
+        let veloren_events = self
             .client
             .tick(ControllerInputs::default(), self.clock.dt())
             .map_err(|error| format!("{error:?}"))?;
 
-        for event in events {
-            self.handle_event(event)?;
+        debug!("Tick! Handling {} bot events", self.events.len());
+
+        while !self.events.is_empty() {
+            if let Some(event) = self.events.pop_front() {
+                self.handle_event(event)?;
+            }
+        }
+
+        debug!("Tick! Handling {} veloren events", veloren_events.len());
+
+        for veloren_event in veloren_events {
+            self.handle_veloren_event(veloren_event)?;
         }
 
         self.client.cleanup();
@@ -85,8 +111,8 @@ impl Bot {
         Ok(())
     }
 
-    fn handle_event(&mut self, event: Event) -> Result<(), String> {
-        if let Event::Chat(message) = event {
+    fn handle_veloren_event(&mut self, event: VelorenEvent) -> Result<(), String> {
+        if let VelorenEvent::Chat(message) = event {
             match message.chat_type {
                 ChatType::Tell(sender, _) | ChatType::Group(sender, _) => {
                     let sender_info = self.client.player_list().get(&sender).unwrap().clone();
@@ -105,59 +131,106 @@ impl Bot {
 
     fn handle_message(&mut self, content: &str, sender: &PlayerInfo) -> Result<(), String> {
         let mut words = content.split_whitespace();
+        let command = if let Some(command) = words.next() {
+            command
+        } else {
+            return Ok(());
+        };
 
-        if let Some(command) = words.next() {
-            match command {
-                "admin" => {
-                    if self.admin_list.contains(&sender.uuid) || self.admin_list.is_empty() {
-                        self.adminify_players(words)?;
+        match command {
+            "admin" => {
+                if self.admin_list.contains(&sender.uuid) || self.admin_list.is_empty() {
+                    for word in words {
+                        self.events.push_back(Event::Admin(word.to_string()));
                     }
                 }
-                "ban" => {
-                    if self.admin_list.contains(&sender.uuid) {
-                        self.kick_players(words.clone());
-                        self.ban_players(words)?;
+            }
+            "ban" => {
+                if self.admin_list.contains(&sender.uuid) {
+                    for word in words {
+                        let uid = self.find_uid(word)?;
+
+                        self.events.push_back(Event::Kick(uid.clone()));
+                        self.events.push_back(Event::Ban(word.to_string()));
                     }
                 }
-                "cheese" => self
-                    .client
-                    .send_command("group".to_string(), vec!["I love cheese!".to_string()]),
-                "inv" => {
-                    if !self.ban_list.contains(&sender.uuid) {
-                        if content == "inv" {
-                            self.invite_players([sender.player_alias.as_str()].into_iter());
-                        } else {
-                            self.invite_players(words);
+            }
+            "cheese" => {
+                let uid = self.find_uid(&sender.player_alias)?;
+
+                if self.client.group_members().contains_key(&uid) {
+                    self.events.push_back(Event::Cheese);
+                }
+            }
+            "inv" => {
+                if !self.ban_list.contains(&sender.uuid) {
+                    if content == "inv" {
+                        let uid = self.find_uid(&sender.player_alias)?;
+
+                        self.events.push_back(Event::Invite(uid));
+                    } else {
+                        for word in words {
+                            let uid = self.find_uid(word)?;
+
+                            self.events.push_back(Event::Invite(uid));
                         }
                     }
                 }
-                "kick" => {
-                    if self.admin_list.contains(&sender.uuid) {
-                        self.kick_players(words);
+            }
+            "kick" => {
+                if self.admin_list.contains(&sender.uuid) {
+                    for word in words {
+                        let uid = self.find_uid(word)?;
+
+                        self.events.push_back(Event::Kick(uid));
                     }
                 }
-                "unban" => {
-                    if self.admin_list.contains(&sender.uuid) {
-                        self.unban_players(words)?;
+            }
+            "unban" => {
+                if self.admin_list.contains(&sender.uuid) {
+                    for word in words {
+                        self.events.push_back(Event::Unban(word.to_string()));
                     }
                 }
-                _ => {}
+            }
+            _ => {}
+        }
+
+        Ok(())
+    }
+
+    fn handle_event(&mut self, event: Event) -> Result<(), String> {
+        match event {
+            Event::Admin(name) => {
+                self.adminify_player(&name)?;
+            }
+            Event::Ban(name) => {
+                self.ban_player(&name)?;
+            }
+            Event::Cheese => self
+                .client
+                .send_command("group".to_string(), vec!["I love cheese!".to_string()]),
+            Event::Invite(uid) => {
+                self.client.send_invite(uid, InviteKind::Group);
+            }
+            Event::Kick(uid) => {
+                self.client.kick_from_group(uid);
+            }
+            Event::Unban(name) => {
+                self.unban_player(&name)?;
             }
         }
 
         Ok(())
     }
 
-    fn adminify_players<'a, T: Iterator<Item = &'a str>>(
-        &mut self,
-        names: T,
-    ) -> Result<(), String> {
-        for name in names {
-            if let Some(uuid) = self.find_uuid(&name) {
-                if !self.admin_list.contains(&uuid) && !self.ban_list.contains(&uuid) {
-                    self.admin_list.push(uuid);
-                }
-            }
+    fn adminify_player(&mut self, name: &str) -> Result<(), String> {
+        info!("Adminifying {name}");
+
+        let uuid = self.find_uuid(name)?;
+
+        if !self.admin_list.contains(&uuid) && !self.ban_list.contains(&uuid) {
+            self.admin_list.push(uuid);
         }
 
         let old_config = Config::read()?;
@@ -173,13 +246,13 @@ impl Bot {
         Ok(())
     }
 
-    fn ban_players<'a, T: Iterator<Item = &'a str>>(&mut self, names: T) -> Result<(), String> {
-        for name in names {
-            if let Some(uuid) = self.find_uuid(&name) {
-                if !self.admin_list.contains(&uuid) && !self.ban_list.contains(&uuid) {
-                    self.ban_list.push(uuid);
-                }
-            }
+    fn ban_player(&mut self, name: &str) -> Result<(), String> {
+        info!("Banning {name}");
+
+        let uuid = self.find_uuid(name)?;
+
+        if !self.admin_list.contains(&uuid) && !self.ban_list.contains(&uuid) {
+            self.ban_list.push(uuid);
         }
 
         let old_config = Config::read()?;
@@ -195,43 +268,18 @@ impl Bot {
         Ok(())
     }
 
-    fn invite_players<'a, T: Iterator<Item = &'a str>>(&mut self, names: T) {
-        for name in names {
-            if let Some(player_id) = self.find_uid(name) {
-                self.client
-                    .send_invite(player_id.clone(), InviteKind::Group);
-            } else {
-                eprintln!("{name} could not be invited")
-            }
-        }
-    }
+    fn unban_player(&mut self, name: &str) -> Result<(), String> {
+        info!("Unbanning {name}");
 
-    fn kick_players<'a, T: Iterator<Item = &'a str>>(&mut self, names: T) {
-        for name in names {
-            if let Some(uid) = self.find_uid(&name) {
-                if let Some(uuid) = self.find_uuid(&name) {
-                    if !self.admin_list.contains(&uuid) {
-                        self.client.kick_from_group(uid.clone());
-                    }
-                }
-            }
-        }
-    }
+        let uuid = self.find_uuid(name)?;
 
-    fn unban_players<'a, T: Iterator<Item = &'a str>>(&mut self, names: T) -> Result<(), String> {
-        let uuids = names
-            .filter_map(|name| self.find_uuid(name))
-            .collect::<Vec<Uuid>>();
-
-        for uuid in uuids {
-            if let Some(index) = self
-                .ban_list
-                .iter()
-                .enumerate()
-                .find_map(|(index, banned)| if &uuid == banned { Some(index) } else { None })
-            {
-                self.ban_list.remove(index);
-            }
+        if let Some(uuid) = self
+            .ban_list
+            .iter()
+            .enumerate()
+            .find_map(|(index, banned)| if &uuid == banned { Some(index) } else { None })
+        {
+            self.ban_list.remove(uuid);
         }
 
         let old_config = Config::read()?;
@@ -247,24 +295,32 @@ impl Bot {
         Ok(())
     }
 
-    fn find_uid<'a>(&'a self, name: &str) -> Option<&'a Uid> {
-        self.client.player_list().iter().find_map(|(id, info)| {
-            if info.player_alias == name {
-                Some(id)
-            } else {
-                None
-            }
-        })
+    fn find_uid(&self, name: &str) -> Result<Uid, String> {
+        self.client
+            .player_list()
+            .iter()
+            .find_map(|(id, info)| {
+                if info.player_alias == name {
+                    Some(id.clone())
+                } else {
+                    None
+                }
+            })
+            .ok_or(format!("Failed to find uid for player {}", name))
     }
 
-    fn find_uuid(&self, name: &str) -> Option<Uuid> {
-        self.client.player_list().iter().find_map(|(_, info)| {
-            if info.player_alias == name {
-                Some(info.uuid)
-            } else {
-                None
-            }
-        })
+    fn find_uuid(&self, name: &str) -> Result<Uuid, String> {
+        self.client
+            .player_list()
+            .iter()
+            .find_map(|(_, info)| {
+                if info.player_alias == name {
+                    Some(info.uuid)
+                } else {
+                    None
+                }
+            })
+            .ok_or(format!("Failed to find uid for player {}", name))
     }
 }
 

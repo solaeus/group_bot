@@ -34,6 +34,8 @@ impl Config {
 }
 
 fn main() {
+    env_logger::init();
+
     let config = Config::read().unwrap();
     let mut bot = Bot::new(
         &config.username,
