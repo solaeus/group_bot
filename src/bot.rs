@@ -86,16 +86,14 @@ impl Bot {
     }
 
     pub fn tick(&mut self) -> Result<(), String> {
+        while let Some(event) = self.events.pop_front() {
+            self.handle_event(event)?;
+        }
+
         let veloren_events = self
             .client
             .tick(ControllerInputs::default(), self.clock.dt())
             .map_err(|error| format!("{error:?}"))?;
-
-        while !self.events.is_empty() {
-            if let Some(event) = self.events.pop_front() {
-                self.handle_event(event)?;
-            }
-        }
 
         for veloren_event in veloren_events {
             self.handle_veloren_event(veloren_event)?;
