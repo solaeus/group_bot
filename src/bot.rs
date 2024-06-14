@@ -1,6 +1,6 @@
 use std::{collections::VecDeque, sync::Arc, time::Duration};
 
-use log::{debug, info};
+use log::info;
 use tokio::runtime::Runtime;
 use veloren_client::{addr::ConnectionArgs, Client, Event as VelorenEvent};
 use veloren_common::{
@@ -41,7 +41,7 @@ impl Bot {
         info!("Connecting to veloren");
 
         let client = connect_to_veloren(username, password)?;
-        let clock = Clock::new(Duration::from_secs_f64(0.1));
+        let clock = Clock::new(Duration::from_secs_f64(0.034));
 
         Ok(Bot {
             client,
@@ -91,15 +91,11 @@ impl Bot {
             .tick(ControllerInputs::default(), self.clock.dt())
             .map_err(|error| format!("{error:?}"))?;
 
-        debug!("Tick! Handling {} bot events", self.events.len());
-
         while !self.events.is_empty() {
             if let Some(event) = self.events.pop_front() {
                 self.handle_event(event)?;
             }
         }
-
-        debug!("Tick! Handling {} veloren events", veloren_events.len());
 
         for veloren_event in veloren_events {
             self.handle_veloren_event(veloren_event)?;
