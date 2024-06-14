@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use log::info;
 use tokio::runtime::Runtime;
@@ -14,21 +14,11 @@ use veloren_common_net::msg::PlayerInfo;
 
 use crate::Config;
 
-enum Event {
-    Admin(String),
-    Ban(String),
-    Cheese,
-    Invite(Uid),
-    Kick(Uid),
-    Unban(String),
-}
-
 pub struct Bot {
     client: Client,
     clock: Clock,
     admin_list: Vec<Uuid>,
     ban_list: Vec<Uuid>,
-    events: VecDeque<Event>,
 }
 
 impl Bot {
@@ -48,7 +38,6 @@ impl Bot {
             clock,
             admin_list,
             ban_list,
-            events: VecDeque::new(),
         })
     }
 
@@ -86,10 +75,6 @@ impl Bot {
     }
 
     pub fn tick(&mut self) -> Result<(), String> {
-        while let Some(event) = self.events.pop_front() {
-            self.handle_event(event)?;
-        }
-
         let veloren_events = self
             .client
             .tick(ControllerInputs::default(), self.clock.dt())
@@ -135,7 +120,7 @@ impl Bot {
             "admin" => {
                 if self.admin_list.contains(&sender.uuid) || self.admin_list.is_empty() {
                     for word in words {
-                        self.events.push_back(Event::Admin(word.to_string()));
+                        self.adminify_player(word)?;
                     }
                 }
             }
@@ -144,8 +129,8 @@ impl Bot {
                     for word in words {
                         let uid = self.find_uid(word)?;
 
-                        self.events.push_back(Event::Kick(uid.clone()));
-                        self.events.push_back(Event::Ban(word.to_string()));
+                        self.client.kick_from_group(uid);
+                        self.ban_player(word)?;
                     }
                 }
             }
@@ -153,7 +138,8 @@ impl Bot {
                 let uid = self.find_uid(&sender.player_alias)?;
 
                 if self.client.group_members().contains_key(&uid) {
-                    self.events.push_back(Event::Cheese);
+                    self.client
+                        .send_command("group".to_string(), vec!["I love cheese!".to_string()])
                 }
             }
             "inv" => {
@@ -161,12 +147,12 @@ impl Bot {
                     if content == "inv" {
                         let uid = self.find_uid(&sender.player_alias)?;
 
-                        self.events.push_back(Event::Invite(uid));
+                        self.client.send_invite(uid, InviteKind::Group);
                     } else {
                         for word in words {
                             let uid = self.find_uid(word)?;
 
-                            self.events.push_back(Event::Invite(uid));
+                            self.client.send_invite(uid, InviteKind::Group);
                         }
                     }
                 }
@@ -176,43 +162,18 @@ impl Bot {
                     for word in words {
                         let uid = self.find_uid(word)?;
 
-                        self.events.push_back(Event::Kick(uid));
+                        self.client.kick_from_group(uid);
                     }
                 }
             }
             "unban" => {
                 if self.admin_list.contains(&sender.uuid) {
                     for word in words {
-                        self.events.push_back(Event::Unban(word.to_string()));
+                        self.unban_player(word)?;
                     }
                 }
             }
             _ => {}
-        }
-
-        Ok(())
-    }
-
-    fn handle_event(&mut self, event: Event) -> Result<(), String> {
-        match event {
-            Event::Admin(name) => {
-                self.adminify_player(&name)?;
-            }
-            Event::Ban(name) => {
-                self.ban_player(&name)?;
-            }
-            Event::Cheese => self
-                .client
-                .send_command("group".to_string(), vec!["I love cheese!".to_string()]),
-            Event::Invite(uid) => {
-                self.client.send_invite(uid, InviteKind::Group);
-            }
-            Event::Kick(uid) => {
-                self.client.kick_from_group(uid);
-            }
-            Event::Unban(name) => {
-                self.unban_player(&name)?;
-            }
         }
 
         Ok(())
