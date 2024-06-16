@@ -278,9 +278,9 @@ impl Bot {
         self.client
             .player_list()
             .iter()
-            .find_map(|(id, info)| {
+            .find_map(|(uid, info)| {
                 if info.player_alias == name {
-                    Some(id.clone())
+                    Some(uid.clone())
                 } else {
                     None
                 }
