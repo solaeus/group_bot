@@ -280,7 +280,7 @@ impl Bot {
             "roll" => {
                 for word in words {
                     let max = word
-                        .parse::<i64>()
+                        .parse::<u64>()
                         .map_err(|error| format!("Failed to parse integer: {error}"))?;
                     let random = thread_rng().gen_range(1..max);
 
