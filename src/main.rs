@@ -6,6 +6,7 @@ use std::{
 };
 
 use bot::Bot;
+use log::{error, info};
 use serde::{Deserialize, Serialize};
 use veloren_common::uuid::Uuid;
 
@@ -19,6 +20,8 @@ struct Config {
 
 impl Config {
     fn read() -> Result<Self, String> {
+        info!("Reading config");
+
         let config_path = var("CONFIG_PATH").map_err(|error| error.to_string())?;
         let config_file_content = read_to_string(config_path).map_err(|error| error.to_string())?;
 
@@ -26,6 +29,8 @@ impl Config {
     }
 
     fn write(&self) -> Result<(), String> {
+        info!("Writing config");
+
         let config_path = var("CONFIG_PATH").map_err(|error| error.to_string())?;
         let config_string = toml::to_string(self).map_err(|error| error.to_string())?;
 
@@ -47,7 +52,8 @@ fn main() {
 
     bot.select_character().expect("Failed to select character");
 
+    #[allow(unused_must_use)]
     loop {
-        bot.tick().expect("Failed to run bot")
+        bot.tick().inspect_err(|e| error!("{e}"));
     }
 }

@@ -31,7 +31,7 @@ impl Bot {
         info!("Connecting to veloren");
 
         let client = connect_to_veloren(username, password)?;
-        let clock = Clock::new(Duration::from_secs_f64(0.034));
+        let clock = Clock::new(Duration::from_secs_f64(1.0 / 60.0));
 
         Ok(Bot {
             client,
@@ -101,6 +101,12 @@ impl Bot {
                         &sender_info,
                     )?;
                 }
+                ChatType::Offline(uid) => {
+                    self.client.kick_from_group(uid);
+                }
+                ChatType::CommandError => {
+                    eprintln!("Command Error!")
+                }
                 _ => {}
             }
         }
@@ -109,6 +115,24 @@ impl Bot {
     }
 
     fn handle_message(&mut self, content: &str, sender: &PlayerInfo) -> Result<(), String> {
+        if content == "inv" {
+            info!("Inviting {}", sender.player_alias);
+
+            let uid = self.find_uid(&sender.player_alias)?;
+
+            self.client.send_invite(uid, InviteKind::Group);
+        }
+
+        if content == "kick_all" && self.admin_list.contains(&sender.uuid) {
+            info!("Kicking everyone");
+
+            let group_members = self.client.group_members().clone();
+
+            for (uid, _) in group_members {
+                self.client.kick_from_group(uid);
+            }
+        }
+
         let mut words = content.split_whitespace();
         let command = if let Some(command) = words.next() {
             command
@@ -120,6 +144,8 @@ impl Bot {
             "admin" => {
                 if self.admin_list.contains(&sender.uuid) || self.admin_list.is_empty() {
                     for word in words {
+                        info!("Adminifying {word}");
+
                         self.adminify_player(word)?;
                     }
                 }
@@ -127,6 +153,8 @@ impl Bot {
             "ban" => {
                 if self.admin_list.contains(&sender.uuid) {
                     for word in words {
+                        info!("Banning {word}");
+
                         let uid = self.find_uid(word)?;
 
                         self.client.kick_from_group(uid);
@@ -135,6 +163,8 @@ impl Bot {
                 }
             }
             "cheese" => {
+                info!("Saying 'I love cheese!' to {}", sender.player_alias);
+
                 let uid = self.find_uid(&sender.player_alias)?;
 
                 if self.client.group_members().contains_key(&uid) {
@@ -144,22 +174,20 @@ impl Bot {
             }
             "inv" => {
                 if !self.ban_list.contains(&sender.uuid) {
-                    if content == "inv" {
-                        let uid = self.find_uid(&sender.player_alias)?;
+                    for word in words {
+                        info!("Inviting {word}");
+
+                        let uid = self.find_uid(word)?;
 
                         self.client.send_invite(uid, InviteKind::Group);
-                    } else {
-                        for word in words {
-                            let uid = self.find_uid(word)?;
-
-                            self.client.send_invite(uid, InviteKind::Group);
-                        }
                     }
                 }
             }
             "kick" => {
                 if self.admin_list.contains(&sender.uuid) {
                     for word in words {
+                        info!("Kicking {word}");
+
                         let uid = self.find_uid(word)?;
 
                         self.client.kick_from_group(uid);
@@ -169,6 +197,8 @@ impl Bot {
             "unban" => {
                 if self.admin_list.contains(&sender.uuid) {
                     for word in words {
+                        info!("Unbanning {word}");
+
                         self.unban_player(word)?;
                     }
                 }
@@ -180,8 +210,6 @@ impl Bot {
     }
 
     fn adminify_player(&mut self, name: &str) -> Result<(), String> {
-        info!("Adminifying {name}");
-
         let uuid = self.find_uuid(name)?;
 
         if !self.admin_list.contains(&uuid) && !self.ban_list.contains(&uuid) {
@@ -202,8 +230,6 @@ impl Bot {
     }
 
     fn ban_player(&mut self, name: &str) -> Result<(), String> {
-        info!("Banning {name}");
-
         let uuid = self.find_uuid(name)?;
 
         if !self.admin_list.contains(&uuid) && !self.ban_list.contains(&uuid) {
@@ -224,8 +250,6 @@ impl Bot {
     }
 
     fn unban_player(&mut self, name: &str) -> Result<(), String> {
-        info!("Unbanning {name}");
-
         let uuid = self.find_uuid(name)?;
 
         if let Some(uuid) = self
@@ -275,7 +299,7 @@ impl Bot {
                     None
                 }
             })
-            .ok_or(format!("Failed to find uid for player {}", name))
+            .ok_or(format!("Failed to find uuid for player {}", name))
     }
 }
 
