@@ -289,6 +289,8 @@ impl Bot {
                         );
                     }
 
+                    info!("Rolling a die 1-{max}");
+
                     let random = thread_rng().gen_range(1..max);
 
                     match message.chat_type {
