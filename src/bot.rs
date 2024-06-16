@@ -282,6 +282,13 @@ impl Bot {
                     let max = word
                         .parse::<u64>()
                         .map_err(|error| format!("Failed to parse integer: {error}"))?;
+
+                    if max <= 1 {
+                        return Err(
+                            "Roll command did not receive an integer greater than 1".to_string()
+                        );
+                    }
+
                     let random = thread_rng().gen_range(1..max);
 
                     match message.chat_type {
