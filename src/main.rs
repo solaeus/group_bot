@@ -1,3 +1,5 @@
+#![feature(extend_one)]
+
 mod bot;
 
 use std::{

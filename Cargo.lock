@@ -814,6 +814,7 @@ dependencies = [
  "env_logger",
  "hashbrown 0.14.5",
  "log",
+ "rand",
  "serde",
  "tokio",
  "toml",

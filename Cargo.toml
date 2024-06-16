@@ -13,6 +13,7 @@ serde = { version = "1.0.203", features = ["derive"] }
 env_logger = "0.11.3"
 log = "0.4.21"
 hashbrown = { version = "0.14.5", features = ["equivalent"] }
+rand = "0.8.5"
 
 [patch.crates-io]
 specs = { git = "https://github.com/amethyst/specs.git", rev = "4e2da1df29ee840baa9b936593c45592b7c9ae27" }

@@ -1,16 +1,16 @@
 use std::{sync::Arc, time::Duration};
 
 use log::info;
+use rand::{thread_rng, Rng};
 use tokio::runtime::Runtime;
 use veloren_client::{addr::ConnectionArgs, Client, Event as VelorenEvent};
 use veloren_common::{
     clock::Clock,
-    comp::{invite::InviteKind, ChatType, ControllerInputs},
+    comp::{chat::GenericChatMsg, invite::InviteKind, ChatType, ControllerInputs},
     uid::Uid,
     uuid::Uuid,
     ViewDistances,
 };
-use veloren_common_net::msg::PlayerInfo;
 
 use crate::Config;
 
@@ -92,38 +92,40 @@ impl Bot {
 
     fn handle_veloren_event(&mut self, event: VelorenEvent) -> Result<(), String> {
         if let VelorenEvent::Chat(message) = event {
-            match message.chat_type {
-                ChatType::Tell(sender, _) | ChatType::Group(sender, _) => {
-                    let sender_info = self.client.player_list().get(&sender).unwrap().clone();
-
-                    self.handle_message(
-                        message.into_content().as_plain().unwrap_or(""),
-                        &sender_info,
-                    )?;
-                }
-                ChatType::Offline(uid) => {
-                    self.client.kick_from_group(uid);
-                }
-                ChatType::CommandError => {
-                    eprintln!("Command Error!")
-                }
-                _ => {}
-            }
+            self.handle_message(message)?;
         }
 
         Ok(())
     }
 
-    fn handle_message(&mut self, content: &str, sender: &PlayerInfo) -> Result<(), String> {
+    fn handle_message(&mut self, message: GenericChatMsg<String>) -> Result<(), String> {
+        let content = message.content().as_plain().unwrap_or("");
+        let sender_uid = match &message.chat_type {
+            ChatType::Tell(from, _) | ChatType::Group(from, _) | ChatType::Say(from) => from,
+            _ => return Ok(()),
+        };
+        let sender_info = self
+            .client
+            .player_list()
+            .into_iter()
+            .find_map(|(uid, player_info)| {
+                if uid == sender_uid {
+                    Some(player_info.clone())
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| format!("Failed to find info for uid {sender_uid}"))?;
+
+        // First, process commands with no arguments
+
         if content == "inv" {
-            info!("Inviting {}", sender.player_alias);
+            info!("Inviting {}", sender_info.player_alias);
 
-            let uid = self.find_uid(&sender.player_alias)?;
-
-            self.client.send_invite(uid, InviteKind::Group);
+            self.client.send_invite(*sender_uid, InviteKind::Group);
         }
 
-        if content == "kick_all" && self.admin_list.contains(&sender.uuid) {
+        if content == "kick_all" && self.admin_list.contains(&sender_info.uuid) {
             info!("Kicking everyone");
 
             let group_members = self.client.group_members().clone();
@@ -132,6 +134,97 @@ impl Bot {
                 self.client.kick_from_group(uid);
             }
         }
+
+        if content == "cheese" {
+            info!("{} loves cheese!", sender_info.player_alias);
+
+            let uid = self.find_uid(&sender_info.player_alias)?;
+
+            if self.client.group_members().contains_key(&uid) {
+                let content = format!("{} loves cheese!", sender_info.player_alias);
+
+                match &message.chat_type {
+                    ChatType::Tell(_, _) | ChatType::Say(_) => {
+                        self.client.send_command("say".to_string(), vec![content])
+                    }
+                    _ => self.client.send_command("group".to_string(), vec![content]),
+                }
+            }
+        }
+
+        if content == "info" {
+            info!("Printing info");
+
+            let mut members_message = "Members:".to_string();
+
+            for (uid, _) in self.client.group_members() {
+                let alias = self
+                    .client
+                    .player_list()
+                    .get(uid)
+                    .unwrap()
+                    .player_alias
+                    .clone();
+
+                members_message.extend_one(' ');
+                members_message.extend(alias.chars().into_iter());
+            }
+
+            let mut admins_message = "Admins:".to_string();
+
+            for uuid in &self.admin_list {
+                for (_, info) in self.client.player_list() {
+                    if &info.uuid == uuid {
+                        admins_message.extend_one(' ');
+                        admins_message.extend(info.player_alias.chars());
+
+                        break;
+                    }
+                }
+            }
+
+            let mut banned_message = "Banned:".to_string();
+
+            for uuid in &self.ban_list {
+                for (_, info) in self.client.player_list() {
+                    if &info.uuid == uuid {
+                        banned_message.extend_one(' ');
+                        banned_message.extend(info.player_alias.chars());
+
+                        break;
+                    }
+                }
+            }
+            match &message.chat_type {
+                ChatType::Tell(_, _) => {
+                    self.client.send_command(
+                        "tell".to_string(),
+                        vec![sender_info.player_alias.clone(), members_message],
+                    );
+                    self.client.send_command(
+                        "tell".to_string(),
+                        vec![sender_info.player_alias.clone(), admins_message],
+                    );
+                    self.client.send_command(
+                        "tell".to_string(),
+                        vec![sender_info.player_alias, banned_message],
+                    );
+                }
+                ChatType::Group(_, _) => {
+                    self.client
+                        .send_command("group".to_string(), vec![members_message]);
+                    self.client
+                        .send_command("group".to_string(), vec![admins_message]);
+                    self.client
+                        .send_command("group".to_string(), vec![banned_message]);
+                }
+                _ => {}
+            }
+
+            return Ok(());
+        }
+
+        // Process commands that use one or more arguments
 
         let mut words = content.split_whitespace();
         let command = if let Some(command) = words.next() {
@@ -142,7 +235,7 @@ impl Bot {
 
         match command {
             "admin" => {
-                if self.admin_list.contains(&sender.uuid) || self.admin_list.is_empty() {
+                if self.admin_list.contains(&sender_info.uuid) || self.admin_list.is_empty() {
                     for word in words {
                         info!("Adminifying {word}");
 
@@ -151,7 +244,7 @@ impl Bot {
                 }
             }
             "ban" => {
-                if self.admin_list.contains(&sender.uuid) {
+                if self.admin_list.contains(&sender_info.uuid) {
                     for word in words {
                         info!("Banning {word}");
 
@@ -162,18 +255,8 @@ impl Bot {
                     }
                 }
             }
-            "cheese" => {
-                info!("Saying 'I love cheese!' to {}", sender.player_alias);
-
-                let uid = self.find_uid(&sender.player_alias)?;
-
-                if self.client.group_members().contains_key(&uid) {
-                    self.client
-                        .send_command("group".to_string(), vec!["I love cheese!".to_string()])
-                }
-            }
             "inv" => {
-                if !self.ban_list.contains(&sender.uuid) {
+                if !self.ban_list.contains(&sender_info.uuid) {
                     for word in words {
                         info!("Inviting {word}");
 
@@ -184,7 +267,7 @@ impl Bot {
                 }
             }
             "kick" => {
-                if self.admin_list.contains(&sender.uuid) {
+                if self.admin_list.contains(&sender_info.uuid) {
                     for word in words {
                         info!("Kicking {word}");
 
@@ -194,8 +277,35 @@ impl Bot {
                     }
                 }
             }
+            "roll" => {
+                for word in words {
+                    let max = word
+                        .parse::<i64>()
+                        .map_err(|error| format!("Failed to parse integer: {error}"))?;
+                    let random = thread_rng().gen_range(1..max);
+
+                    match message.chat_type {
+                        ChatType::Tell(_, _) => self.client.send_command(
+                            "tell".to_string(),
+                            vec![
+                                sender_info.player_alias.clone(),
+                                format!("Rolled a die with {} sides and got {random}.", max),
+                            ],
+                        ),
+                        ChatType::Say(_) => self.client.send_command(
+                            "say".to_string(),
+                            vec![format!("Rolled a die with {} sides and got {random}.", max)],
+                        ),
+                        ChatType::Group(_, _) => self.client.send_command(
+                            "group".to_string(),
+                            vec![format!("Rolled a die with {} sides and got {random}.", max)],
+                        ),
+                        _ => return Ok(()),
+                    }
+                }
+            }
             "unban" => {
-                if self.admin_list.contains(&sender.uuid) {
+                if self.admin_list.contains(&sender_info.uuid) {
                     for word in words {
                         info!("Unbanning {word}");
 
