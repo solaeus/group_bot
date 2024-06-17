@@ -99,11 +99,11 @@ impl Bot {
     }
 
     fn handle_message(&mut self, message: GenericChatMsg<String>) -> Result<(), String> {
-        let content = message.content().as_plain().unwrap_or("");
         let sender_uid = match &message.chat_type {
             ChatType::Tell(from, _) | ChatType::Group(from, _) | ChatType::Say(from) => from,
             _ => return Ok(()),
         };
+        let content = message.content().as_plain().unwrap_or("");
         let sender_info = self
             .client
             .player_list()
@@ -117,12 +117,14 @@ impl Bot {
             })
             .ok_or_else(|| format!("Failed to find info for uid {sender_uid}"))?;
 
-        // First, process commands with no arguments
+        // Process commands with no arguments
 
         if content == "inv" {
             info!("Inviting {}", sender_info.player_alias);
 
             self.client.send_invite(*sender_uid, InviteKind::Group);
+
+            return Ok(());
         }
 
         if content == "kick_all" && self.admin_list.contains(&sender_info.uuid) {
@@ -133,6 +135,8 @@ impl Bot {
             for (uid, _) in group_members {
                 self.client.kick_from_group(uid);
             }
+
+            return Ok(());
         }
 
         if content == "cheese" {
@@ -150,6 +154,8 @@ impl Bot {
                     _ => self.client.send_command("group".to_string(), vec![content]),
                 }
             }
+
+            return Ok(());
         }
 
         if content == "info" {
@@ -195,6 +201,7 @@ impl Bot {
                     }
                 }
             }
+
             match &message.chat_type {
                 ChatType::Tell(_, _) => {
                     self.client.send_command(
