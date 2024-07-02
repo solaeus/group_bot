@@ -123,6 +123,35 @@ impl Bot {
 
         // Process commands with no arguments
 
+        if content == "help" {
+            info!("Showing help for {}", sender_info.player_alias);
+
+            let command_list =
+                format!("Commands: admin, ban, cheese, info, inv, inv_all, kick, roll, unban");
+            let example = format!("Example: inv name1 name2 name3");
+            let command_details = format!("Admin-only commands: admin, ban, inv_all, kick, unban");
+
+            match &message.chat_type {
+                ChatType::Tell(_, _) | ChatType::Group(_, _) => {
+                    self.client.send_command(
+                        "tell".to_string(),
+                        vec![sender_info.player_alias.clone(), command_list],
+                    );
+                    self.client.send_command(
+                        "tell".to_string(),
+                        vec![sender_info.player_alias.clone(), example],
+                    );
+                    self.client.send_command(
+                        "tell".to_string(),
+                        vec![sender_info.player_alias, command_details],
+                    );
+                }
+                _ => {}
+            }
+
+            return Ok(());
+        }
+
         if content == "inv" {
             info!("Inviting {}", sender_info.player_alias);
 
@@ -131,13 +160,13 @@ impl Bot {
             return Ok(());
         }
 
-        if content == "kick_all" && self.admin_list.contains(&sender_info.uuid) {
-            info!("Kicking everyone");
+        if content == "inv_all" && self.admin_list.contains(&sender_info.uuid) {
+            info!("Inviting everyone...");
 
-            let group_members = self.client.group_members().clone();
+            let player_list = self.client.player_list().clone();
 
-            for (uid, _) in group_members {
-                self.client.kick_from_group(uid);
+            for (uid, _) in player_list {
+                self.client.send_invite(uid, InviteKind::Group);
             }
 
             return Ok(());
@@ -203,7 +232,7 @@ impl Bot {
             }
 
             match &message.chat_type {
-                ChatType::Tell(_, _) => {
+                ChatType::Tell(_, _) | ChatType::Group(_, _) => {
                     self.client.send_command(
                         "tell".to_string(),
                         vec![sender_info.player_alias.clone(), members_message],
@@ -216,14 +245,6 @@ impl Bot {
                         "tell".to_string(),
                         vec![sender_info.player_alias, banned_message],
                     );
-                }
-                ChatType::Group(_, _) => {
-                    self.client
-                        .send_command("group".to_string(), vec![members_message]);
-                    self.client
-                        .send_command("group".to_string(), vec![admins_message]);
-                    self.client
-                        .send_command("group".to_string(), vec![banned_message]);
                 }
                 _ => {}
             }
