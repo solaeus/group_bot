@@ -197,7 +197,7 @@ impl Bot {
                     .client
                     .player_list()
                     .get(uid)
-                    .unwrap()
+                    .ok_or(format!("Failed to find player with uid {uid}."))?
                     .player_alias
                     .clone();
 
