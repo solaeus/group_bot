@@ -142,17 +142,13 @@ impl Bot {
         if content == "cheese" {
             info!("{} loves cheese!", sender_info.player_alias);
 
-            let uid = self.find_uid(&sender_info.player_alias)?;
+            let content = format!("{} loves cheese!", sender_info.player_alias);
 
-            if self.client.group_members().contains_key(&uid) {
-                let content = format!("{} loves cheese!", sender_info.player_alias);
-
-                match &message.chat_type {
-                    ChatType::Tell(_, _) | ChatType::Say(_) => {
-                        self.client.send_command("say".to_string(), vec![content])
-                    }
-                    _ => self.client.send_command("group".to_string(), vec![content]),
+            match &message.chat_type {
+                ChatType::Tell(_, _) | ChatType::Say(_) => {
+                    self.client.send_command("say".to_string(), vec![content])
                 }
+                _ => self.client.send_command("group".to_string(), vec![content]),
             }
 
             return Ok(());
