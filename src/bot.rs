@@ -117,6 +117,10 @@ impl Bot {
             })
             .ok_or_else(|| format!("Failed to find info for uid {sender_uid}"))?;
 
+        if self.ban_list.contains(&sender_info.uuid) {
+            return Ok(());
+        }
+
         // Process commands with no arguments
 
         if content == "inv" {
@@ -259,12 +263,12 @@ impl Bot {
                 }
             }
             "inv" => {
-                if !self.ban_list.contains(&sender_info.uuid) {
-                    for word in words {
-                        info!("Inviting {word}");
+                for word in words {
+                    info!("Inviting {word}");
 
-                        let uid = self.find_uid(word)?;
+                    let (uid, uuid) = self.find_ids(word)?;
 
+                    if !self.ban_list.contains(&uuid) {
                         self.client.send_invite(uid, InviteKind::Group);
                     }
                 }
@@ -422,6 +426,20 @@ impl Bot {
                 }
             })
             .ok_or(format!("Failed to find uuid for player {}", name))
+    }
+
+    fn find_ids(&self, name: &str) -> Result<(Uid, Uuid), String> {
+        self.client
+            .player_list()
+            .iter()
+            .find_map(|(uid, info)| {
+                if info.player_alias == name {
+                    Some((*uid, info.uuid))
+                } else {
+                    None
+                }
+            })
+            .ok_or(format!("Failed to find ids for player {}", name))
     }
 }
 
