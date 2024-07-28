@@ -49,8 +49,8 @@ fn main() {
 
     loop {
         match bot.tick() {
-            Ok(true) => return,
-            Ok(false) => {}
+            Ok(true) => {}
+            Ok(false) => return,
             Err(error) => {
                 error!("{error}");
             }

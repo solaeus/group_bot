@@ -6,13 +6,14 @@ use std::{
     time::{Duration, Instant},
 };
 
-use log::{debug, info};
+use log::{debug, error, info};
 use tokio::runtime::Runtime;
 use vek::{Quaternion, Vec3};
 use veloren_client::{addr::ConnectionArgs, Client, Event as VelorenEvent, WorldExt};
 use veloren_common::{
     clock::Clock,
     comp::{ChatType, ControllerInputs, Ori, Pos},
+    outcome::Outcome,
     time::DayPeriod,
     uid::Uid,
     uuid::Uuid,
@@ -204,6 +205,9 @@ impl Bot {
                     self.client
                         .send_command("tell".to_string(), vec![player_name, message.to_string()]);
                 }
+            }
+            VelorenEvent::Kicked(message) => {
+                error!("Kicked from server: {message:?}");
             }
             _ => (),
         }
