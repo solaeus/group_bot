@@ -1,477 +1,345 @@
-use std::{sync::Arc, time::Duration};
+/// A bot that buys, sells and trades with players.
+///
+/// See [main.rs] for an example of how to run this bot.
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
-use log::info;
-use rand::{thread_rng, Rng};
+use log::{debug, info};
 use tokio::runtime::Runtime;
-use veloren_client::{addr::ConnectionArgs, Client, Event as VelorenEvent};
+use vek::{Quaternion, Vec3};
+use veloren_client::{addr::ConnectionArgs, Client, Event as VelorenEvent, WorldExt};
 use veloren_common::{
     clock::Clock,
-    comp::{chat::GenericChatMsg, invite::InviteKind, ChatType, ControllerInputs},
+    comp::{ChatType, ControllerInputs, Ori, Pos},
+    time::DayPeriod,
     uid::Uid,
     uuid::Uuid,
     ViewDistances,
 };
 
-use crate::Config;
+const CLIENT_TPS: Duration = Duration::from_millis(33);
 
+/// An active connection to the Veloren server that will attempt to run every time the `tick`
+/// function is called.
 pub struct Bot {
+    username: String,
+    position: Pos,
+    orientation: Ori,
+    admins: Vec<String>,
+
     client: Client,
     clock: Clock,
-    admin_list: Vec<Uuid>,
-    ban_list: Vec<Uuid>,
+
+    last_action: Instant,
 }
 
 impl Bot {
+    /// Connect to the official veloren server, select the specified character
+    /// and return a Bot instance ready to run.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
-        username: &str,
+        game_server: String,
+        auth_server: &str,
+        username: String,
         password: &str,
-        admin_list: Vec<Uuid>,
-        ban_list: Vec<Uuid>,
+        character: &str,
+        admins: Vec<String>,
+        position: Option<[f32; 3]>,
+        orientation: Option<f32>,
     ) -> Result<Self, String> {
         info!("Connecting to veloren");
 
-        let client = connect_to_veloren(username, password)?;
-        let clock = Clock::new(Duration::from_secs_f64(1.0 / 60.0));
+        let mut client = connect_to_veloren(game_server, auth_server, &username, password)?;
+        let mut clock = Clock::new(CLIENT_TPS);
+
+        client.load_character_list();
+
+        while client.character_list().loading {
+            client
+                .tick(ControllerInputs::default(), clock.dt())
+                .map_err(|error| format!("{error:?}"))?;
+            clock.tick();
+        }
+
+        let character_id = client
+            .character_list()
+            .characters
+            .iter()
+            .find(|character_item| character_item.character.alias == character)
+            .ok_or_else(|| format!("No character named {character}"))?
+            .character
+            .id
+            .ok_or("Failed to get character ID")?;
+
+        info!("Selecting a character");
+
+        // This loop waits and retries requesting the character in the case that the character has
+        // logged out too recently.
+        while client.position().is_none() {
+            client.request_character(
+                character_id,
+                ViewDistances {
+                    terrain: 4,
+                    entity: 4,
+                },
+            );
+
+            client
+                .tick(ControllerInputs::default(), clock.dt())
+                .map_err(|error| format!("{error:?}"))?;
+            clock.tick();
+        }
+
+        let position = if let Some(coords) = position {
+            Pos(coords.into())
+        } else {
+            client.position().map(Pos).ok_or("Failed to get position")?
+        };
+        let orientation = if let Some(orientation) = orientation {
+            Ori::new(Quaternion::rotation_z(orientation.to_radians()))
+        } else {
+            client.current::<Ori>().ok_or("Failed to get orientation")?
+        };
 
         Ok(Bot {
+            username,
+            position,
+            orientation,
+            admins,
             client,
             clock,
-            admin_list,
-            ban_list,
+            last_action: Instant::now(),
         })
     }
 
-    pub fn select_character(&mut self) -> Result<(), String> {
-        info!("Selecting a character");
-
-        self.client.load_character_list();
-
-        while self.client.character_list().loading {
-            self.client
-                .tick(ControllerInputs::default(), self.clock.dt())
-                .map_err(|error| format!("{error:?}"))?;
-            self.clock.tick();
-        }
-
-        let character_id = self
-            .client
-            .character_list()
-            .characters
-            .first()
-            .expect("No characters to select")
-            .character
-            .id
-            .expect("Failed to get character ID");
-
-        self.client.request_character(
-            character_id,
-            ViewDistances {
-                terrain: 0,
-                entity: 0,
-            },
-        );
-
-        Ok(())
-    }
-
-    pub fn tick(&mut self) -> Result<(), String> {
+    /// Run the bot for a single tick. This should be called in a loop. Returns `true` if the loop
+    /// should continue running.
+    pub fn tick(&mut self) -> Result<bool, String> {
         let veloren_events = self
             .client
             .tick(ControllerInputs::default(), self.clock.dt())
             .map_err(|error| format!("{error:?}"))?;
 
-        for veloren_event in veloren_events {
-            self.handle_veloren_event(veloren_event)?;
+        for event in veloren_events {
+            let should_continue = self.handle_veloren_event(event)?;
+
+            if !should_continue {
+                return Ok(false);
+            }
         }
 
-        self.client.cleanup();
+        if self.last_action.elapsed() > Duration::from_millis(300) {
+            self.handle_lantern();
+            self.handle_position_and_orientation()?;
+
+            self.last_action = Instant::now();
+        }
+
         self.clock.tick();
 
-        Ok(())
+        Ok(true)
     }
 
-    fn handle_veloren_event(&mut self, event: VelorenEvent) -> Result<(), String> {
-        if let VelorenEvent::Chat(message) = event {
-            self.handle_message(message)?;
-        }
-
-        Ok(())
-    }
-
-    fn handle_message(&mut self, message: GenericChatMsg<String>) -> Result<(), String> {
-        let sender_uid = match &message.chat_type {
-            ChatType::Tell(from, _) | ChatType::Group(from, _) | ChatType::Say(from) => from,
-            _ => return Ok(()),
-        };
-        let content = message.content().as_plain().unwrap_or("");
-        let sender_info = self
-            .client
-            .player_list()
-            .into_iter()
-            .find_map(|(uid, player_info)| {
-                if uid == sender_uid {
-                    Some(player_info.clone())
+    /// Consume and manage a client-side Veloren event. Returns a boolean indicating whether the
+    /// bot should continue processing events.
+    fn handle_veloren_event(&mut self, event: VelorenEvent) -> Result<bool, String> {
+        match event {
+            VelorenEvent::Chat(message) => {
+                let sender = if let ChatType::Tell(uid, _) = message.chat_type {
+                    uid
                 } else {
-                    None
-                }
-            })
-            .ok_or_else(|| format!("Failed to find info for uid {sender_uid}"))?;
+                    return Ok(true);
+                };
+                let content = message.content().as_plain().unwrap_or_default();
+                let mut split_content = content.split(' ');
+                let command = split_content.next().unwrap_or_default();
+                let price_correction_message = "Use the format 'price [search_term]'";
+                let correction_message = match command {
+                    "ori" => {
+                        if self.is_user_admin(&sender)? {
+                            if let Some(new_rotation) = split_content.next() {
+                                let new_rotation = new_rotation
+                                    .parse::<f32>()
+                                    .map_err(|error| error.to_string())?;
 
-        if self.ban_list.contains(&sender_info.uuid) {
-            return Ok(());
-        }
+                                self.orientation =
+                                    Ori::new(Quaternion::rotation_z(new_rotation.to_radians()));
 
-        // Process commands with no arguments
-
-        if content == "help" {
-            info!("Showing help for {}", sender_info.player_alias);
-
-            let command_list =
-                format!("Commands: admin, ban, cheese, info, inv, inv_all, kick, roll, unban");
-            let example = format!("Example: inv name1 name2 name3");
-            let command_details = format!("Admin-only commands: admin, ban, inv_all, kick, unban");
-
-            match &message.chat_type {
-                ChatType::Tell(_, _) | ChatType::Group(_, _) => {
-                    self.client.send_command(
-                        "tell".to_string(),
-                        vec![sender_info.player_alias.clone(), command_list],
-                    );
-                    self.client.send_command(
-                        "tell".to_string(),
-                        vec![sender_info.player_alias.clone(), example],
-                    );
-                    self.client.send_command(
-                        "tell".to_string(),
-                        vec![sender_info.player_alias, command_details],
-                    );
-                }
-                _ => {}
-            }
-
-            return Ok(());
-        }
-
-        if content == "inv" {
-            info!("Inviting {}", sender_info.player_alias);
-
-            self.client.send_invite(*sender_uid, InviteKind::Group);
-
-            return Ok(());
-        }
-
-        if content == "inv_all" && self.admin_list.contains(&sender_info.uuid) {
-            info!("Inviting everyone...");
-
-            let player_list = self.client.player_list().clone();
-
-            for (uid, _) in player_list {
-                self.client.send_invite(uid, InviteKind::Group);
-            }
-
-            return Ok(());
-        }
-
-        if content == "cheese" {
-            info!("{} loves cheese!", sender_info.player_alias);
-
-            let content = format!("{} loves cheese!", sender_info.player_alias);
-
-            match &message.chat_type {
-                ChatType::Tell(_, _) | ChatType::Say(_) => {
-                    self.client.send_command("say".to_string(), vec![content])
-                }
-                _ => self.client.send_command("group".to_string(), vec![content]),
-            }
-
-            return Ok(());
-        }
-
-        if content == "info" {
-            info!("Printing info");
-
-            let mut members_message = "Members:".to_string();
-
-            for (uid, _) in self.client.group_members() {
-                let alias = self
-                    .client
-                    .player_list()
-                    .get(uid)
-                    .ok_or(format!("Failed to find player with uid {uid}."))?
-                    .player_alias
-                    .clone();
-
-                members_message.extend_one(' ');
-                members_message.extend(alias.chars().into_iter());
-            }
-
-            let mut admins_message = "Admins:".to_string();
-
-            for uuid in &self.admin_list {
-                for (_, info) in self.client.player_list() {
-                    if &info.uuid == uuid {
-                        admins_message.extend_one(' ');
-                        admins_message.extend(info.player_alias.chars());
-
-                        break;
+                                None
+                            } else {
+                                Some("Use the format 'ori [0-360]'")
+                            }
+                        } else {
+                            Some(price_correction_message)
+                        }
                     }
-                }
-            }
+                    "pos" => {
+                        if self.is_user_admin(&sender)? {
+                            if let (Some(x), Some(y), Some(z)) = (
+                                split_content.next(),
+                                split_content.next(),
+                                split_content.next(),
+                            ) {
+                                self.position = Pos(Vec3::new(
+                                    x.parse::<f32>().map_err(|error| error.to_string())?,
+                                    y.parse::<f32>().map_err(|error| error.to_string())?,
+                                    z.parse::<f32>().map_err(|error| error.to_string())?,
+                                ));
 
-            let mut banned_message = "Banned:".to_string();
-
-            for uuid in &self.ban_list {
-                for (_, info) in self.client.player_list() {
-                    if &info.uuid == uuid {
-                        banned_message.extend_one(' ');
-                        banned_message.extend(info.player_alias.chars());
-
-                        break;
+                                None
+                            } else {
+                                Some("Use the format 'pos [x] [y] [z]'.")
+                            }
+                        } else {
+                            Some(price_correction_message)
+                        }
                     }
+                    _ => Some(price_correction_message),
+                };
+
+                if let Some(message) = correction_message {
+                    let player_name = self
+                        .find_player_alias(&sender)
+                        .ok_or("Failed to find player name")?
+                        .to_string();
+
+                    self.client.send_command(
+                        "tell".to_string(),
+                        vec![player_name.clone(), message.to_string()],
+                    );
                 }
             }
-
-            match &message.chat_type {
-                ChatType::Tell(_, _) | ChatType::Group(_, _) => {
-                    self.client.send_command(
-                        "tell".to_string(),
-                        vec![sender_info.player_alias.clone(), members_message],
-                    );
-                    self.client.send_command(
-                        "tell".to_string(),
-                        vec![sender_info.player_alias.clone(), admins_message],
-                    );
-                    self.client.send_command(
-                        "tell".to_string(),
-                        vec![sender_info.player_alias, banned_message],
-                    );
-                }
-                _ => {}
+            VelorenEvent::Disconnect => {
+                return Ok(false);
             }
-
-            return Ok(());
+            _ => (),
         }
 
-        // Process commands that use one or more arguments
+        Ok(true)
+    }
 
-        let mut words = content.split_whitespace();
-        let command = if let Some(command) = words.next() {
-            command
+    /// Use the lantern at night and put it away during the day.
+    fn handle_lantern(&mut self) {
+        let day_period = self.client.state().get_day_period();
+
+        match day_period {
+            DayPeriod::Night => {
+                if !self.client.is_lantern_enabled() {
+                    self.client.enable_lantern();
+                }
+            }
+            DayPeriod::Morning | DayPeriod::Noon | DayPeriod::Evening => {
+                if self.client.is_lantern_enabled() {
+                    self.client.disable_lantern();
+                }
+            }
+        }
+    }
+
+    /// Determines if the Uid belongs to an admin.
+    fn is_user_admin(&self, uid: &Uid) -> Result<bool, String> {
+        let sender_name = self.find_player_alias(uid).ok_or("Failed to find name")?;
+
+        if self.admins.contains(sender_name) {
+            Ok(true)
         } else {
-            return Ok(());
-        };
+            let sender_uuid = self
+                .find_uuid(uid)
+                .ok_or("Failed to find uuid")?
+                .to_string();
 
-        match command {
-            "admin" => {
-                if self.admin_list.contains(&sender_info.uuid) || self.admin_list.is_empty() {
-                    for word in words {
-                        info!("Adminifying {word}");
+            Ok(self.admins.contains(&sender_uuid))
+        }
+    }
 
-                        self.adminify_player(word)?;
-                    }
-                }
+    /// Moves the character to the configured position and orientation.
+    fn handle_position_and_orientation(&mut self) -> Result<(), String> {
+        if let Some(current_position) = self.client.current::<Pos>() {
+            if current_position != self.position {
+                debug!(
+                    "Updating position from {} to {}",
+                    current_position.0, self.position.0
+                );
+
+                let entity = self.client.entity();
+                let ecs = self.client.state_mut().ecs();
+                let mut position_state = ecs.write_storage::<Pos>();
+
+                position_state
+                    .insert(entity, self.position)
+                    .map_err(|error| error.to_string())?;
             }
-            "ban" => {
-                if self.admin_list.contains(&sender_info.uuid) {
-                    for word in words {
-                        info!("Banning {word}");
+        }
 
-                        let uid = self.find_uid(word)?;
+        if let Some(current_orientation) = self.client.current::<Ori>() {
+            if current_orientation != self.orientation {
+                debug!(
+                    "Updating orientation from {:?} to {:?}",
+                    current_orientation, self.orientation
+                );
 
-                        self.client.kick_from_group(uid);
-                        self.ban_player(word)?;
-                    }
-                }
+                let entity = self.client.entity();
+                let ecs = self.client.state_mut().ecs();
+                let mut orientation_state = ecs.write_storage::<Ori>();
+
+                orientation_state
+                    .insert(entity, self.orientation)
+                    .map_err(|error| error.to_string())?;
             }
-            "inv" => {
-                for word in words {
-                    info!("Inviting {word}");
-
-                    let (uid, uuid) = self.find_ids(word)?;
-
-                    if !self.ban_list.contains(&uuid) {
-                        self.client.send_invite(uid, InviteKind::Group);
-                    }
-                }
-            }
-            "kick" => {
-                if self.admin_list.contains(&sender_info.uuid) {
-                    for word in words {
-                        info!("Kicking {word}");
-
-                        let uid = self.find_uid(word)?;
-
-                        self.client.kick_from_group(uid);
-                    }
-                }
-            }
-            "roll" => {
-                for word in words {
-                    let max = word
-                        .parse::<u64>()
-                        .map_err(|error| format!("Failed to parse integer: {error}"))?;
-
-                    if max <= 1 {
-                        return Err(
-                            "Roll command did not receive an integer greater than 1".to_string()
-                        );
-                    }
-
-                    info!("Rolling a die 1-{max}");
-
-                    let random = thread_rng().gen_range(1..=max);
-
-                    match message.chat_type {
-                        ChatType::Tell(_, _) => self.client.send_command(
-                            "tell".to_string(),
-                            vec![
-                                sender_info.player_alias.clone(),
-                                format!("Rolled a die with {} sides and got {random}.", max),
-                            ],
-                        ),
-                        ChatType::Say(_) => self.client.send_command(
-                            "say".to_string(),
-                            vec![format!("Rolled a die with {} sides and got {random}.", max)],
-                        ),
-                        ChatType::Group(_, _) => self.client.send_command(
-                            "group".to_string(),
-                            vec![format!("Rolled a die with {} sides and got {random}.", max)],
-                        ),
-                        _ => return Ok(()),
-                    }
-                }
-            }
-            "unban" => {
-                if self.admin_list.contains(&sender_info.uuid) {
-                    for word in words {
-                        info!("Unbanning {word}");
-
-                        self.unban_player(word)?;
-                    }
-                }
-            }
-            _ => {}
         }
 
         Ok(())
     }
 
-    fn adminify_player(&mut self, name: &str) -> Result<(), String> {
-        let uuid = self.find_uuid(name)?;
+    /// Finds the name of a player by their Uid.
+    fn find_player_alias<'a>(&'a self, uid: &Uid) -> Option<&'a String> {
+        self.client.player_list().iter().find_map(|(id, info)| {
+            if id == uid {
+                return Some(&info.player_alias);
+            }
 
-        if !self.admin_list.contains(&uuid) && !self.ban_list.contains(&uuid) {
-            self.admin_list.push(uuid);
-        }
-
-        let old_config = Config::read()?;
-        let new_config = Config {
-            username: old_config.username,
-            password: old_config.password,
-            admin_list: self.admin_list.clone(),
-            ban_list: old_config.ban_list,
-        };
-
-        new_config.write()?;
-
-        Ok(())
+            None
+        })
     }
 
-    fn ban_player(&mut self, name: &str) -> Result<(), String> {
-        let uuid = self.find_uuid(name)?;
-
-        if !self.admin_list.contains(&uuid) && !self.ban_list.contains(&uuid) {
-            self.ban_list.push(uuid);
-        }
-
-        let old_config = Config::read()?;
-        let new_config = Config {
-            username: old_config.username,
-            password: old_config.password,
-            admin_list: old_config.admin_list,
-            ban_list: self.ban_list.clone(),
-        };
-
-        new_config.write()?;
-
-        Ok(())
+    /// Finds the Uuid of a player by their Uid.
+    fn find_uuid(&self, target: &Uid) -> Option<Uuid> {
+        self.client.player_list().iter().find_map(|(uid, info)| {
+            if uid == target {
+                Some(info.uuid)
+            } else {
+                None
+            }
+        })
     }
 
-    fn unban_player(&mut self, name: &str) -> Result<(), String> {
-        let uuid = self.find_uuid(name)?;
-
-        if let Some(uuid) = self
-            .ban_list
-            .iter()
-            .enumerate()
-            .find_map(|(index, banned)| if &uuid == banned { Some(index) } else { None })
-        {
-            self.ban_list.remove(uuid);
-        }
-
-        let old_config = Config::read()?;
-        let new_config = Config {
-            username: old_config.username,
-            password: old_config.password,
-            admin_list: old_config.admin_list,
-            ban_list: self.ban_list.clone(),
-        };
-
-        new_config.write()?;
-
-        Ok(())
-    }
-
-    fn find_uid(&self, name: &str) -> Result<Uid, String> {
-        self.client
-            .player_list()
-            .iter()
-            .find_map(|(uid, info)| {
-                if info.player_alias == name {
-                    Some(uid.clone())
-                } else {
-                    None
-                }
-            })
-            .ok_or(format!("Failed to find uid for player {}", name))
-    }
-
-    fn find_uuid(&self, name: &str) -> Result<Uuid, String> {
-        self.client
-            .player_list()
-            .iter()
-            .find_map(|(_, info)| {
-                if info.player_alias == name {
-                    Some(info.uuid)
-                } else {
-                    None
-                }
-            })
-            .ok_or(format!("Failed to find uuid for player {}", name))
-    }
-
-    fn find_ids(&self, name: &str) -> Result<(Uid, Uuid), String> {
-        self.client
-            .player_list()
-            .iter()
-            .find_map(|(uid, info)| {
-                if info.player_alias == name {
-                    Some((*uid, info.uuid))
-                } else {
-                    None
-                }
-            })
-            .ok_or(format!("Failed to find ids for player {}", name))
+    /// Finds the Uid of a player by their name.
+    fn _find_uid<'a>(&'a self, name: &str) -> Option<&'a Uid> {
+        self.client.player_list().iter().find_map(|(id, info)| {
+            if info.player_alias == name {
+                Some(id)
+            } else {
+                None
+            }
+        })
     }
 }
 
-fn connect_to_veloren(username: &str, password: &str) -> Result<Client, String> {
+fn connect_to_veloren(
+    game_server: String,
+    auth_server: &str,
+    username: &str,
+    password: &str,
+) -> Result<Client, String> {
     let runtime = Arc::new(Runtime::new().unwrap());
     let runtime2 = Arc::clone(&runtime);
 
     runtime
         .block_on(Client::new(
             ConnectionArgs::Tcp {
-                hostname: "server.veloren.net".to_string(),
+                hostname: game_server,
                 prefer_ipv6: false,
             },
             runtime2,
@@ -479,7 +347,7 @@ fn connect_to_veloren(username: &str, password: &str) -> Result<Client, String> 
             username,
             password,
             None,
-            |provider| provider == "https://auth.veloren.net",
+            |provider| provider == auth_server,
             &|_| {},
             |_| {},
             Default::default(),

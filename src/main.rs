@@ -1,61 +1,59 @@
-#![feature(extend_one)]
+#![feature(duration_constructors)]
 
 mod bot;
+mod config;
 
-use std::{
-    env::var,
-    fs::{read_to_string, write},
-};
+use std::{env::var, fs::read_to_string};
 
 use bot::Bot;
-use log::{error, info};
-use serde::{Deserialize, Serialize};
-use veloren_common::uuid::Uuid;
-
-#[derive(Serialize, Deserialize)]
-struct Config {
-    pub username: String,
-    pub password: String,
-    pub admin_list: Vec<Uuid>,
-    pub ban_list: Vec<Uuid>,
-}
-
-impl Config {
-    fn read() -> Result<Self, String> {
-        info!("Reading config");
-
-        let config_path = var("CONFIG_PATH").map_err(|error| error.to_string())?;
-        let config_file_content = read_to_string(config_path).map_err(|error| error.to_string())?;
-
-        toml::from_str::<Config>(&config_file_content).map_err(|error| error.to_string())
-    }
-
-    fn write(&self) -> Result<(), String> {
-        info!("Writing config");
-
-        let config_path = var("CONFIG_PATH").map_err(|error| error.to_string())?;
-        let config_string = toml::to_string(self).map_err(|error| error.to_string())?;
-
-        write(config_path, config_string).map_err(|error| error.to_string())
-    }
-}
+use config::{Config, Secrets};
+use env_logger::Env;
+use log::error;
 
 fn main() {
-    env_logger::init();
+    env_logger::Builder::from_env(Env::default().default_filter_or("debug")).init();
 
-    let config = Config::read().unwrap();
+    let secrets = {
+        let secrets_path =
+            var("SECRETS").expect("Provide a SECRETS variable specifying the secrets file");
+        let file_content = read_to_string(secrets_path).expect("Failed to read secrets");
+
+        toml::from_str::<Secrets>(&file_content).expect("Failed to parse secrets")
+    };
+    let config = {
+        if let Ok(config_path) = var("CONFIG") {
+            let file_content = read_to_string(config_path).expect("Failed to read config");
+
+            toml::from_str::<Config>(&file_content).expect("Failed to parse config")
+        } else {
+            Config::default()
+        }
+    };
+    let game_server = config
+        .game_server
+        .unwrap_or_else(|| "server.veloren.net".to_string());
+    let auth_server = config
+        .auth_server
+        .unwrap_or_else(|| "https://auth.veloren.net".to_string());
     let mut bot = Bot::new(
-        &config.username,
-        &config.password,
-        config.admin_list,
-        config.ban_list,
+        game_server,
+        &auth_server,
+        secrets.username,
+        &secrets.password,
+        &secrets.character,
+        secrets.admins,
+        config.position,
+        config.orientation,
     )
     .expect("Failed to create bot");
 
-    bot.select_character().expect("Failed to select character");
-
-    #[allow(unused_must_use)]
     loop {
-        bot.tick().inspect_err(|e| error!("{e}"));
+        match bot.tick() {
+            Ok(true) => return,
+            Ok(false) => {}
+            Err(error) => {
+                error!("{error}");
+            }
+        }
     }
 }
