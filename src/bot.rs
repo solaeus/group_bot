@@ -123,11 +123,7 @@ impl Bot {
             .map_err(|error| format!("{error:?}"))?;
 
         for event in veloren_events {
-            let should_continue = self.handle_veloren_event(event)?;
-
-            if !should_continue {
-                return Ok(false);
-            }
+            self.handle_veloren_event(event)?;
         }
 
         if self.last_action.elapsed() > Duration::from_millis(300) {
@@ -144,13 +140,13 @@ impl Bot {
 
     /// Consume and manage a client-side Veloren event. Returns a boolean indicating whether the
     /// bot should continue processing events.
-    fn handle_veloren_event(&mut self, event: VelorenEvent) -> Result<bool, String> {
+    fn handle_veloren_event(&mut self, event: VelorenEvent) -> Result<(), String> {
         match event {
             VelorenEvent::Chat(message) => {
                 let sender = if let ChatType::Tell(uid, _) = message.chat_type {
                     uid
                 } else {
-                    return Ok(true);
+                    return Ok(());
                 };
                 let content = message.content().as_plain().unwrap_or_default();
                 let mut split_content = content.split(' ');
@@ -205,19 +201,14 @@ impl Bot {
                         .ok_or("Failed to find player name")?
                         .to_string();
 
-                    self.client.send_command(
-                        "tell".to_string(),
-                        vec![player_name.clone(), message.to_string()],
-                    );
+                    self.client
+                        .send_command("tell".to_string(), vec![player_name, message.to_string()]);
                 }
-            }
-            VelorenEvent::Disconnect => {
-                return Ok(false);
             }
             _ => (),
         }
 
-        Ok(true)
+        Ok(())
     }
 
     /// Use the lantern at night and put it away during the day.
