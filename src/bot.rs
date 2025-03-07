@@ -122,15 +122,6 @@ impl Bot {
                 };
                 let sender_name = self.find_player_alias(&sender_uid)?.clone();
 
-                if !self.admins.contains(&sender_name) {
-                    self.client.send_command(
-                        "tell".to_string(),
-                        vec![sender_name, "You are not allowed to do that.".to_string()],
-                    );
-
-                    return Ok(());
-                }
-
                 let message_parts: Vec<&str> = message
                     .content()
                     .as_plain()
@@ -142,6 +133,15 @@ impl Bot {
 
                 match *command {
                     "inv" => {
+                        if !self.admins.contains(&sender_name) {
+                            self.client.send_command(
+                                "tell".to_string(),
+                                vec![sender_name, "You are not an admin".to_string()],
+                            );
+
+                            return Ok(());
+                        }
+
                         if args.is_empty() {
                             self.client.send_invite(sender_uid, InviteKind::Group);
                         } else {
@@ -158,6 +158,15 @@ impl Bot {
                         }
                     }
                     "kick" => {
+                        if !self.admins.contains(&sender_name) {
+                            self.client.send_command(
+                                "tell".to_string(),
+                                vec![sender_name, "You are not an admin".to_string()],
+                            );
+
+                            return Ok(());
+                        }
+
                         if args.is_empty() {
                             self.client.send_command(
                                 "tell".to_string(),
@@ -175,6 +184,15 @@ impl Bot {
                         }
                     }
                     "admin" => {
+                        if !self.admins.contains(&sender_name) {
+                            self.client.send_command(
+                                "tell".to_string(),
+                                vec![sender_name, "You are not an admin".to_string()],
+                            );
+
+                            return Ok(());
+                        }
+
                         if args.is_empty() {
                             self.client.send_command(
                                 "tell".to_string(),
