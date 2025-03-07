@@ -1,6 +1,6 @@
 BasicMelee(
     energy_cost: 0,
-    buildup_duration: 0.2,
+    buildup_duration: 0.45,
     swing_duration: 0.3,
     recover_duration: 0.1,
     melee_constructor: (
@@ -21,6 +21,5 @@ BasicMelee(
         ))),
     ),
     hit_timing: 0.5,
-    ori_modifier: 1.0,
     frontend_specifier: Some(FlameTornado),
 )

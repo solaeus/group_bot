@@ -4,7 +4,7 @@ BasicRanged(
     recover_duration: 1.5,
     projectile: (
         kind: Explosive(
-            radius: 10,
+            radius: 5,
             min_falloff: 0.5,
             reagent: Some(Yellow),
             terrain: Some((2, Black))
@@ -15,7 +15,7 @@ BasicRanged(
             buff: Some((
                 kind: Burning,
                 dur_secs: 4,
-                strength: DamageFraction(1.0),
+                strength: DamageFraction(0.4),
                 chance: 0.6,
             )),
         )),
@@ -23,7 +23,7 @@ BasicRanged(
     projectile_body: Object(TerracottaDemolisherBomb),
     projectile_light: None,
     projectile_speed: 0.0,
-    num_projectiles: 1,
+    num_projectiles: Value(1),
     projectile_spread: 0.0,
     move_efficiency: 0.3,
 )

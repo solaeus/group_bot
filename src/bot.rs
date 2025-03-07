@@ -1,22 +1,15 @@
 /// A bot that buys, sells and trades with players.
 ///
 /// See [main.rs] for an example of how to run this bot.
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{sync::Arc, time::Duration};
 
-use log::{debug, error, info};
+use log::info;
 use tokio::runtime::Runtime;
-use vek::{Quaternion, Vec3};
-use veloren_client::{addr::ConnectionArgs, Client, Event as VelorenEvent, WorldExt};
+use veloren_client::{addr::ConnectionArgs, Client, ClientType, Event as VelorenEvent};
 use veloren_common::{
     clock::Clock,
-    comp::{ChatType, ControllerInputs, Ori, Pos},
-    outcome::Outcome,
-    time::DayPeriod,
+    comp::{invite::InviteKind, ChatType, ControllerInputs},
     uid::Uid,
-    uuid::Uuid,
     ViewDistances,
 };
 
@@ -25,15 +18,10 @@ const CLIENT_TPS: Duration = Duration::from_millis(33);
 /// An active connection to the Veloren server that will attempt to run every time the `tick`
 /// function is called.
 pub struct Bot {
-    username: String,
-    position: Pos,
-    orientation: Ori,
     admins: Vec<String>,
 
     client: Client,
     clock: Clock,
-
-    last_action: Instant,
 }
 
 impl Bot {
@@ -47,8 +35,6 @@ impl Bot {
         password: &str,
         character: &str,
         admins: Vec<String>,
-        position: Option<[f32; 3]>,
-        orientation: Option<f32>,
     ) -> Result<Self, String> {
         info!("Connecting to veloren");
 
@@ -93,25 +79,10 @@ impl Bot {
             clock.tick();
         }
 
-        let position = if let Some(coords) = position {
-            Pos(coords.into())
-        } else {
-            client.position().map(Pos).ok_or("Failed to get position")?
-        };
-        let orientation = if let Some(orientation) = orientation {
-            Ori::new(Quaternion::rotation_z(orientation.to_radians()))
-        } else {
-            client.current::<Ori>().ok_or("Failed to get orientation")?
-        };
-
         Ok(Bot {
-            username,
-            position,
-            orientation,
             admins,
             client,
             clock,
-            last_action: Instant::now(),
         })
     }
 
@@ -127,13 +98,6 @@ impl Bot {
             self.handle_veloren_event(event)?;
         }
 
-        if self.last_action.elapsed() > Duration::from_millis(300) {
-            self.handle_lantern();
-            self.handle_position_and_orientation()?;
-
-            self.last_action = Instant::now();
-        }
-
         self.clock.tick();
 
         Ok(true)
@@ -144,70 +108,109 @@ impl Bot {
     fn handle_veloren_event(&mut self, event: VelorenEvent) -> Result<(), String> {
         match event {
             VelorenEvent::Chat(message) => {
-                let sender = if let ChatType::Tell(uid, _) = message.chat_type {
+                if !matches!(
+                    message.chat_type,
+                    ChatType::Tell(_, _) | ChatType::Group(_, _)
+                ) {
+                    return Ok(());
+                }
+
+                let sender_uid = if let Some(uid) = message.uid() {
                     uid
                 } else {
                     return Ok(());
                 };
-                let content = message.content().as_plain().unwrap_or_default();
-                let mut split_content = content.split(' ');
-                let command = split_content.next().unwrap_or_default();
-                let price_correction_message = "Use the format 'price [search_term]'";
-                let correction_message = match command {
-                    "ori" => {
-                        if self.is_user_admin(&sender)? {
-                            if let Some(new_rotation) = split_content.next() {
-                                let new_rotation = new_rotation
-                                    .parse::<f32>()
-                                    .map_err(|error| error.to_string())?;
+                let sender_name = self.find_player_alias(&sender_uid)?.clone();
 
-                                self.orientation =
-                                    Ori::new(Quaternion::rotation_z(new_rotation.to_radians()));
+                if !self.admins.contains(&sender_name) {
+                    self.client.send_command(
+                        "tell".to_string(),
+                        vec![sender_name, "You are not allowed to do that.".to_string()],
+                    );
 
-                                None
-                            } else {
-                                Some("Use the format 'ori [0-360]'")
-                            }
-                        } else {
-                            Some(price_correction_message)
-                        }
-                    }
-                    "pos" => {
-                        if self.is_user_admin(&sender)? {
-                            if let (Some(x), Some(y), Some(z)) = (
-                                split_content.next(),
-                                split_content.next(),
-                                split_content.next(),
-                            ) {
-                                self.position = Pos(Vec3::new(
-                                    x.parse::<f32>().map_err(|error| error.to_string())?,
-                                    y.parse::<f32>().map_err(|error| error.to_string())?,
-                                    z.parse::<f32>().map_err(|error| error.to_string())?,
-                                ));
-
-                                None
-                            } else {
-                                Some("Use the format 'pos [x] [y] [z]'.")
-                            }
-                        } else {
-                            Some(price_correction_message)
-                        }
-                    }
-                    _ => Some(price_correction_message),
-                };
-
-                if let Some(message) = correction_message {
-                    let player_name = self
-                        .find_player_alias(&sender)
-                        .ok_or("Failed to find player name")?
-                        .to_string();
-
-                    self.client
-                        .send_command("tell".to_string(), vec![player_name, message.to_string()]);
+                    return Ok(());
                 }
-            }
-            VelorenEvent::Kicked(message) => {
-                error!("Kicked from server: {message:?}");
+
+                let message_parts: Vec<&str> = message
+                    .content()
+                    .as_plain()
+                    .unwrap_or("")
+                    .split_whitespace()
+                    .collect();
+                let command = message_parts.get(0).ok_or("Failed to get command")?;
+                let args = &message_parts[1..];
+
+                match *command {
+                    "inv" => {
+                        if args.is_empty() {
+                            self.client.send_invite(sender_uid, InviteKind::Group);
+                        } else {
+                            for arg in args {
+                                let target_uid =
+                                    self.find_uid(arg).ok_or("Failed to find target uid")?;
+
+                                self.client.send_invite(*target_uid, InviteKind::Group);
+                                self.client.send_command(
+                                    "tell".to_string(),
+                                    vec![sender_name.clone(), format!("Invited {}", arg)],
+                                );
+                            }
+                        }
+                    }
+                    "kick" => {
+                        if args.is_empty() {
+                            self.client.send_command(
+                                "tell".to_string(),
+                                vec![sender_name, "You must specify a player to kick".to_string()],
+                            );
+
+                            return Ok(());
+                        }
+
+                        for arg in args {
+                            let target_uid =
+                                self.find_uid(arg).ok_or("Failed to find target uid")?;
+
+                            self.client.kick_from_group(*target_uid);
+                        }
+                    }
+                    "admin" => {
+                        if args.is_empty() {
+                            self.client.send_command(
+                                "tell".to_string(),
+                                vec![
+                                    sender_name,
+                                    "You must specify a player to promote".to_string(),
+                                ],
+                            );
+
+                            return Ok(());
+                        }
+
+                        for arg in args {
+                            let target_uid =
+                                self.find_uid(arg).ok_or("Failed to find target uid")?;
+                            let target_name = self.find_player_alias(target_uid)?.clone();
+
+                            self.admins.push(target_name.clone());
+                            self.client.send_command(
+                                "tell".to_string(),
+                                vec![sender_name.clone(), format!("Promoted {}", target_name)],
+                            );
+                        }
+                    }
+                    "frosty" => {
+                        self.client.send_command(
+                            "group".to_string(),
+                            vec!["Do I look like a Discord bot to you?".to_string()],
+                        );
+                    }
+                    "cheese" => {
+                        self.client
+                            .send_command("say".to_string(), vec!["I love cheese!".to_string()]);
+                    }
+                    _ => {}
+                }
             }
             _ => (),
         }
@@ -215,103 +218,23 @@ impl Bot {
         Ok(())
     }
 
-    /// Use the lantern at night and put it away during the day.
-    fn handle_lantern(&mut self) {
-        let day_period = self.client.state().get_day_period();
-
-        match day_period {
-            DayPeriod::Night => {
-                if !self.client.is_lantern_enabled() {
-                    self.client.enable_lantern();
-                }
-            }
-            DayPeriod::Morning | DayPeriod::Noon | DayPeriod::Evening => {
-                if self.client.is_lantern_enabled() {
-                    self.client.disable_lantern();
-                }
-            }
-        }
-    }
-
-    /// Determines if the Uid belongs to an admin.
-    fn is_user_admin(&self, uid: &Uid) -> Result<bool, String> {
-        let sender_name = self.find_player_alias(uid).ok_or("Failed to find name")?;
-
-        if self.admins.contains(sender_name) {
-            Ok(true)
-        } else {
-            let sender_uuid = self
-                .find_uuid(uid)
-                .ok_or("Failed to find uuid")?
-                .to_string();
-
-            Ok(self.admins.contains(&sender_uuid))
-        }
-    }
-
-    /// Moves the character to the configured position and orientation.
-    fn handle_position_and_orientation(&mut self) -> Result<(), String> {
-        if let Some(current_position) = self.client.current::<Pos>() {
-            if current_position != self.position {
-                debug!(
-                    "Updating position from {} to {}",
-                    current_position.0, self.position.0
-                );
-
-                let entity = self.client.entity();
-                let ecs = self.client.state_mut().ecs();
-                let mut position_state = ecs.write_storage::<Pos>();
-
-                position_state
-                    .insert(entity, self.position)
-                    .map_err(|error| error.to_string())?;
-            }
-        }
-
-        if let Some(current_orientation) = self.client.current::<Ori>() {
-            if current_orientation != self.orientation {
-                debug!(
-                    "Updating orientation from {:?} to {:?}",
-                    current_orientation, self.orientation
-                );
-
-                let entity = self.client.entity();
-                let ecs = self.client.state_mut().ecs();
-                let mut orientation_state = ecs.write_storage::<Ori>();
-
-                orientation_state
-                    .insert(entity, self.orientation)
-                    .map_err(|error| error.to_string())?;
-            }
-        }
-
-        Ok(())
-    }
-
     /// Finds the name of a player by their Uid.
-    fn find_player_alias<'a>(&'a self, uid: &Uid) -> Option<&'a String> {
-        self.client.player_list().iter().find_map(|(id, info)| {
-            if id == uid {
-                return Some(&info.player_alias);
-            }
+    fn find_player_alias<'a>(&'a self, uid: &Uid) -> Result<&'a String, String> {
+        self.client
+            .player_list()
+            .iter()
+            .find_map(|(id, info)| {
+                if id == uid {
+                    return Some(&info.player_alias);
+                }
 
-            None
-        })
-    }
-
-    /// Finds the Uuid of a player by their Uid.
-    fn find_uuid(&self, target: &Uid) -> Option<Uuid> {
-        self.client.player_list().iter().find_map(|(uid, info)| {
-            if uid == target {
-                Some(info.uuid)
-            } else {
                 None
-            }
-        })
+            })
+            .ok_or("Failed to find player alias".to_string())
     }
 
     /// Finds the Uid of a player by their name.
-    fn _find_uid<'a>(&'a self, name: &str) -> Option<&'a Uid> {
+    fn find_uid<'a>(&'a self, name: &str) -> Option<&'a Uid> {
         self.client.player_list().iter().find_map(|(id, info)| {
             if info.player_alias == name {
                 Some(id)
@@ -346,6 +269,7 @@ fn connect_to_veloren(
             &|_| {},
             |_| {},
             Default::default(),
+            ClientType::Bot { privileged: false },
         ))
         .map_err(|error| format!("{error:?}"))
 }

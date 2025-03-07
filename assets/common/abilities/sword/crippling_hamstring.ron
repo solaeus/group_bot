@@ -12,7 +12,7 @@ ComboMelee2(
                 angle: 45.0,
                 damage_effect: Some(Buff((
                     kind: Crippled,
-                    dur_secs: 10.0,
+                    dur_secs: 5.0,
                     strength: Value(0.25),
                     chance: 1.0,
                 ))),
@@ -21,7 +21,6 @@ ComboMelee2(
             swing_duration: 0.1,
             hit_timing: 0.6,
             recover_duration: 0.3,
-            ori_modifier: 0.6,
         ),
     ],
     energy_cost_per_strike: 10,

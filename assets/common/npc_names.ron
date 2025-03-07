@@ -876,6 +876,14 @@
                 keyword: "toucan",
                 generic: "Toucan"
             ),
+            bloodmoon_bat: (
+                keyword: "bloodmoon_bat",
+                generic: "Bloodmoon Heiress"
+            ),
+            vampire_bat: (
+                keyword: "vampire_bat",
+                generic: "Vampire Bat"
+            ),
         )
     ),
     biped_large: (
@@ -1013,6 +1021,14 @@
             forgemaster: (
                 keyword: "forgemaster",
                 generic: "Forgemaster"
+            ),
+            executioner: (
+                keyword: "executioner",
+                generic: "Executioner"
+            ),
+            strigoi: (
+                keyword: "strigoi",
+                generic: "Strigoi"
             )
         )
     ),
@@ -1233,6 +1249,50 @@
                 keyword: "treasure_egg",
                 generic: "Treasure Egg",
             ),
+            gnarling_chieftain: (
+                keyword: "gnarling_chieftain",
+                generic: "Gnarling Chieftain"
+            ),
+            bloodmoon_heiress: (
+                keyword: "bloodmoon_heiress",
+                generic: "Bloodmoon Heiress"
+            ),
+            bloodservant: (
+                keyword: "bloodservant",
+                generic: "Bloodservant"
+            ),
+            harlequin: (
+                keyword: "harlequin",
+                generic: "Harlequin"
+            ),
+            goblin_thug: (
+                keyword: "goblin_thug",
+                generic: "Goblin Thug",
+            ),
+            goblin_chucker: (
+                keyword: "goblin_chucker",
+                generic: "Goblin Chucker",
+            ),
+            goblin_ruffian: (
+                keyword: "goblin_ruffian",
+                generic: "Goblin Ruffian",
+            ),
+            green_legoom: (
+                keyword: "green_legoom",
+                generic: "Green Legoom",
+            ),
+            ochre_legoom: (
+                keyword: "ochre_legoom",
+                generic: "Ochre Legoom",
+            ),
+            purple_legoom: (
+                keyword: "purple_legoom",
+                generic: "Purple Legoom",
+            ),
+            red_legoom: (
+                keyword: "red_legoom",
+                generic: "Red Legoom",
+            ),                                                             
         )
     ),
     fish_small: (
@@ -1413,6 +1473,10 @@
                 keyword: "driggle",
                 generic: "Driggle"
             ),
+            hydra: (
+                keyword: "hydra",
+                generic: "Hydra"
+            ),
         )
     ),
     arthropod: (
@@ -1487,6 +1551,26 @@
                 keyword: "crab",
                 generic: "Crab",
             ),
-        )
+            soldier_crab: (
+                keyword: "soldier_crab",
+                generic: "Soldier Crab",
+            ),            
+            karkatha: (
+                keyword: "karkatha",
+                generic: "Karkatha",
+            ),
+        ),
+    ),
+    plugin: (
+        body: (
+            keyword: "plugin",
+            names_0: ["Nobody"]
+        ),
+        species: (
+            plugin: (
+                keyword: "unknown",
+                generic: "unknown",
+            ),
+        ),
     ),
 )

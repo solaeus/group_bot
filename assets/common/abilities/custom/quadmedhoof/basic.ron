@@ -3,7 +3,7 @@ BasicMelee(
     buildup_duration: 0.7,
     swing_duration: 0.45,
     hit_timing: 0.4,
-    recover_duration: 0.85,
+    recover_duration: 1.55,
     melee_constructor: (
         kind: Bash(
             damage: 10.0,
@@ -14,5 +14,9 @@ BasicMelee(
         range: 3.0,
         angle: 50.0,
     ),
-    ori_modifier: 0.5,
+    ori_modifier: (
+        buildup: Some(0.5),
+        swing: Some(0.5),
+        recover: Some(0.5),
+    ),
 )

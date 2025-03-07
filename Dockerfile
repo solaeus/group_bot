@@ -11,7 +11,7 @@ RUN apt-get update
 RUN apt-get install -y git
 RUN cargo build --release
 
-FROM fedora:40
+FROM fedora:41
 
 WORKDIR /app
 

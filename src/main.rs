@@ -6,7 +6,7 @@ mod config;
 use std::{env::var, fs::read_to_string};
 
 use bot::Bot;
-use config::{Config, Secrets};
+use config::Secrets;
 use env_logger::Env;
 use log::error;
 
@@ -20,30 +20,15 @@ fn main() {
 
         toml::from_str::<Secrets>(&file_content).expect("Failed to parse secrets")
     };
-    let config = {
-        if let Ok(config_path) = var("CONFIG") {
-            let file_content = read_to_string(config_path).expect("Failed to read config");
-
-            toml::from_str::<Config>(&file_content).expect("Failed to parse config")
-        } else {
-            Config::default()
-        }
-    };
-    let game_server = config
-        .game_server
-        .unwrap_or_else(|| "server.veloren.net".to_string());
-    let auth_server = config
-        .auth_server
-        .unwrap_or_else(|| "https://auth.veloren.net".to_string());
+    let game_server = "server.veloren.net".to_string();
+    let auth_server = "https://auth.veloren.net".to_string();
     let mut bot = Bot::new(
         game_server,
         &auth_server,
         secrets.username,
         &secrets.password,
         &secrets.character,
-        secrets.admins,
-        config.position,
-        config.orientation,
+        secrets.admin_list,
     )
     .expect("Failed to create bot");
 

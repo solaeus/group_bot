@@ -18,13 +18,12 @@ ComboMelee2(
                 ))),
             ),
             buildup_duration: 0.7,
-            swing_duration: 0.2,
+            swing_duration: 0.3,
             hit_timing: 0.4,
             recover_duration: 0.3,
             movement: (
                 swing: Some(Forward(0.8)),
             ),
-            ori_modifier: 0.6,
         ),
         (
             melee_constructor: (
@@ -43,14 +42,13 @@ ComboMelee2(
                     chance: 0.15,
                 ))),
             ),
-            buildup_duration: 0.95,
+            buildup_duration: 1.25,
             swing_duration: 0.15,
             hit_timing: 0.4,
             recover_duration: 1.3,
             movement: (
                 swing: Some(Forward(0.2)),
             ),
-            ori_modifier: 0.6,
         ),
     ],
     energy_cost_per_strike: 0,

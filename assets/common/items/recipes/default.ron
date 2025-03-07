@@ -10,6 +10,8 @@ ItemDef(
             "beast_small_cooked",
             "beast_large_cooked",
             "tough_cooked",
+            // Potions
+            "potion_minor",
             // Armors
             "rawhide_back",
             "rawhide_belt",
@@ -32,6 +34,7 @@ ItemDef(
             "bronze_hands",
             "bronze_pants",
             "bronze_shoulder",
+            "bronze_head",
             // Weapon components
             "short_hilt",
             "medium_hilt",
@@ -67,6 +70,7 @@ ItemDef(
             "simple_leather",
             "linen_flax",
             "cloth_strips",
+            "velorite_frag",
             // Tools
             "craftsman_hammer",
             "mortar_pestle",
@@ -76,6 +80,10 @@ ItemDef(
             // Bags
             "tiny_red_pouch",
             "tiny_leather_pouch",
+            // Gliders
+            "plain_cloth_glider",
+            // Lanterns
+            "black_lantern",
         ],
     ),
     quality: Common,

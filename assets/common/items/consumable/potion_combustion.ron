@@ -11,7 +11,15 @@ ItemDef(
                     duration: Some(10)
                 ),
                 cat_ids: [Natural],
-            ))
+            )),
+            Buff((
+                kind: PotionSickness,
+                data: (
+                    strength: 0.15,
+                    duration: Some(30),
+                ),
+                cat_ids: [Natural],
+            )),
         ])
     ),
     quality: Moderate,

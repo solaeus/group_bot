@@ -13,6 +13,8 @@ ItemDef(
             "washboard",
             "sitar",
             "icy_talharpa",
+            "kora",
+            "banjo",
         ],
     ),
     quality: Common,

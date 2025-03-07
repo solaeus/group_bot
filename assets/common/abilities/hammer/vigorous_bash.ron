@@ -3,12 +3,12 @@ ComboMelee2(
         (
             melee_constructor: (
                 kind: Bash(
-                    damage: 15,
+                    damage: 14,
                     poise: 15,
                     knockback: 3,
                     energy_regen: 0,
                 ),
-                range: 4.0,
+                range: 3.0,
                 angle: 15.0,
             ),
             buildup_duration: 0.2,
@@ -19,9 +19,8 @@ ComboMelee2(
                 buildup: Some(Forward(0.2)),
                 swing: Some(Forward(0.3)),
             ),
-            ori_modifier: 0.6,
-            custom_combo: Some((additional: 4, requirement: Some(TargetPoised))),
+            custom_combo: (conditional: Some((4, TargetPoised))),
         ),
     ],
-    energy_cost_per_strike: 10,
+    energy_cost_per_strike: 15,
 )

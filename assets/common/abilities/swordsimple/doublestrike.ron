@@ -3,7 +3,7 @@ ComboMelee2(
         (
             melee_constructor: (
                 kind: Slash(
-                    damage: 8,
+                    damage: 11,
                     poise: 15,
                     knockback: 8,
                     energy_regen: 0,
@@ -24,12 +24,11 @@ ComboMelee2(
             movement: (
                 swing: Some(Forward(2.5)),
             ),
-            ori_modifier: 0.7,
         ),
         (
             melee_constructor: (
                 kind: Slash(
-                    damage: 10,
+                    damage: 13,
                     poise: 20,
                     knockback: 12,
                     energy_regen: 0,
@@ -50,7 +49,6 @@ ComboMelee2(
             movement: (
                 swing: Some(Forward(2.0)),
             ),
-            ori_modifier: 0.7,
         ),
     ],
     energy_cost_per_strike: 0,
