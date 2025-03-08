@@ -98,6 +98,10 @@ impl Bot {
             self.handle_veloren_event(event)?;
         }
 
+        if !self.client.is_dead() {
+            self.client.send_command("kill".to_string(), Vec::new());
+        }
+
         self.clock.tick();
 
         Ok(true)
@@ -216,16 +220,6 @@ impl Bot {
                                 vec![sender_name.clone(), format!("Promoted {}", target_name)],
                             );
                         }
-                    }
-                    "frosty" => {
-                        self.client.send_command(
-                            "group".to_string(),
-                            vec!["Do I look like a Discord bot to you?".to_string()],
-                        );
-                    }
-                    "cheese" => {
-                        self.client
-                            .send_command("say".to_string(), vec!["I love cheese!".to_string()]);
                     }
                     _ => {}
                 }
