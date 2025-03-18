@@ -10,6 +10,7 @@ use std::{
 use log::info;
 use tokio::runtime::Runtime;
 use veloren_client::{addr::ConnectionArgs, Client, ClientType, Event as VelorenEvent};
+use veloren_client_i18n::{Localization, LocalizationHandle};
 use veloren_common::{
     clock::Clock,
     comp::{
@@ -24,12 +25,6 @@ use veloren_common::{
 const CLIENT_TPS: Duration = Duration::from_millis(33);
 const BOT_EVENT_INTERVAL: Duration = Duration::from_millis(200);
 
-enum BotEvent {
-    InvitePlayer(Uid),
-    KickPlayer(Uid),
-    SendTell(String, String),
-}
-
 /// An active connection to the Veloren server that will attempt to run every time the `tick`
 /// function is called.
 pub struct Bot {
@@ -42,6 +37,7 @@ pub struct Bot {
     last_bot_event: Instant,
 
     item_i18n: ItemI18n,
+    localization_strings: Localization,
 }
 
 impl Bot {
@@ -106,6 +102,7 @@ impl Bot {
             events: VecDeque::new(),
             last_bot_event: Instant::now(),
             item_i18n: ItemI18n::new_expect(),
+            localization_strings: LocalizationHandle::load_expect("en").read(),
         })
     }
 
@@ -264,15 +261,19 @@ impl Bot {
                 }
             }
             VelorenEvent::GroupInventoryUpdate(item, uid) => {
-                let (item_name, _) = item.i18n(&self.item_i18n);
                 let recipient_name = self.find_player_alias(&uid)?;
+                let (title_content, _) = item.i18n(&self.item_i18n);
+                let item_name = self.localization_strings.get_content(&title_content);
+                let quantity = item.amount();
+                let message = format!("{recipient_name} picked up {item_name} x{quantity}");
 
-                if item_name.as_plain().unwrap_or("") == "Dwarven Cheese" {
-                    self.events.push_back(BotEvent::SendTell(
-                        recipient_name.clone(),
-                        format!("Congratulations on the cheese, {recipient_name}!"),
-                    ));
+                if item_name == "Dwarven Cheese" {
+                    self.events.push_back(BotEvent::SendGroupMessage(format!(
+                        "Congratulations on the cheese, {recipient_name}!"
+                    )));
                 }
+
+                self.events.push_back(BotEvent::SendGroupMessage(message));
             }
             _ => (),
         }
@@ -292,6 +293,9 @@ impl Bot {
             BotEvent::SendTell(name, message) => {
                 self.client
                     .send_command("tell".to_string(), vec![name, message]);
+            }
+            BotEvent::SendGroupMessage(message) => {
+                self.client.send_command("group".to_string(), vec![message]);
             }
         }
 
@@ -323,6 +327,13 @@ impl Bot {
             }
         })
     }
+}
+
+enum BotEvent {
+    InvitePlayer(Uid),
+    KickPlayer(Uid),
+    SendTell(String, String),
+    SendGroupMessage(String),
 }
 
 fn connect_to_veloren(
