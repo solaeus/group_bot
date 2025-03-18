@@ -1,4 +1,4 @@
-/// A bot that buys, sells and trades with players.
+/// A bot that manages a group of Veloren players.
 ///
 /// See [main.rs] for an example of how to run this bot.
 use std::{
@@ -22,7 +22,7 @@ use veloren_common::{
 };
 
 const CLIENT_TPS: Duration = Duration::from_millis(33);
-const BOT_EVENT_INTERVAL: Duration = Duration::from_secs(1);
+const BOT_EVENT_INTERVAL: Duration = Duration::from_millis(200);
 
 enum BotEvent {
     InvitePlayer(Uid),
@@ -138,8 +138,7 @@ impl Bot {
         Ok(true)
     }
 
-    /// Consume and manage a client-side Veloren event. Returns a boolean indicating whether the
-    /// bot should continue processing events.
+    /// Consume and manage a client-side Veloren event.
     fn handle_veloren_event(&mut self, event: VelorenEvent) -> Result<(), String> {
         match event {
             VelorenEvent::Chat(message) => {
@@ -281,6 +280,7 @@ impl Bot {
         Ok(())
     }
 
+    /// Consume and manage a bot event.
     fn handle_bot_event(&mut self, event: BotEvent) -> Result<(), String> {
         match event {
             BotEvent::InvitePlayer(uid) => {
